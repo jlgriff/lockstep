@@ -38,10 +38,11 @@ lockstep recording.mp3 script.txt
 That writes `recording.json` beside the recording, and prints what it managed:
 
 ```
-recording.json: 42 lines (41/41 anchored, 1 rests), 168/172 script words matched (98%), 175 words heard
+recording.json: 42 lines (41/42 anchored), 168/172 script words matched (98%), 175 words heard
 ```
 
-`-o somewhere.json` picks the output path instead.
+`-o somewhere.json` picks the output path, and `--format vtt` or `--format lrc` writes a
+standard subtitle file instead.
 
 **The recording** can be mp3, wav, flac, aac, m4a/alac or ogg. No converting first.
 
@@ -56,50 +57,68 @@ The second line, punctuation and all
 
 ## Output
 
+Three formats. `--format json` is the default and the only one carrying per-word provenance;
+the other two are the standards, for players that already read them.
+
+| `--format` | | |
+| --- | --- | --- |
+| `json` | lockstep's own | full detail, including how each word got its time |
+| `vtt` | WebVTT | a browser plays it natively from a `<track>` element |
+| `lrc` | Enhanced LRC | music players read it as karaoke lyrics |
+
+### json
+
 ```json
 {
-  "source": "script.txt",
-  "timing": "aligned",
-  "matched": 0.97,
+  "version": 1,
+  "generator": "lockstep 0.1.0",
+  "script": "script.txt",
   "duration": 180.0,
+  "alignment": { "matched": 166, "words": 170, "rate": 0.98 },
   "lines": [
     {
       "start": 12.0,
       "end": 16.5,
       "text": "The first line as it is printed",
       "words": [
-        { "start": 12.0, "text": "The" },
-        { "start": 12.4, "text": "first" },
-        { "start": 13.1, "text": "line", "timing": "carried" }
+        { "start": 12.0, "end": 12.4, "text": "The" },
+        { "start": 12.4, "end": 13.1, "text": "first" },
+        { "start": 13.1, "end": 16.5, "text": "line", "timing": "carried" }
       ]
-    },
-    { "start": 20.0, "end": 26.0, "text": "" }
+    }
   ]
 }
 ```
 
 | field | |
 | --- | --- |
-| `matched` | share of your script the recording was actually heard to say. The number to gate on |
+| `version` | this file format. Refuse a version you do not know |
+| `generator` | which lockstep wrote it |
+| `script` | the script's filename, never the path it was read from |
+| `alignment` | how much of the script was actually heard: the counts, and the rate to gate on |
 | `start`, `end` | seconds |
-| `words` | one entry per word as printed, punctuation included |
-| `text: ""` | a rest: the recording is running but nothing is being said |
 
-A word's keys echo a line's, so the same name means the same thing at either level: `start` is
-when it is reached, `text` is what is printed. The one extra key is `timing`, which says how the
-word got its time and is **written only when that time was not measured**.
+A word's keys echo a line's, so the same name means the same thing at either level. Words fill
+their line end to end: the first starts where the line starts, the last ends where it ends, and
+each runs until the next begins.
 
-Rests matter more than they look. A display showing one line at a time will otherwise leave a
-stale line up through an entire intro or break.
+**Silence is a gap, not an entry.** A pause is the space between one line's `end` and the next
+line's `start`, and the run-out is the space between the last line's `end` and `duration`. There
+are no placeholder entries to skip over.
 
-Top level, `"timing": "aligned"` says how the file was produced. Per word it answers the same
-question at word scale, and is absent when the word aligned to something actually heard:
+The one extra key is `timing`, which says how a word got its time and is **written only when
+that time was not measured**. Top level, `"timing"` is absent for the same reason it is on a
+measured word: nothing needed saying.
 
 | `timing` | meaning |
 | --- | --- |
 | absent | the word aligned to something heard in the recording. Its time is measured |
-| `carried` | the line was heard but this word was not, so it took a neighbour's time. Usually punctuation, or a word the transcriber misheard |
+| `carried` | the line was heard but this word was not, so it takes its neighbour's time exactly. Usually punctuation, or a word the transcriber misheard |
 | `spread` | nothing in the line was heard, so its words are spaced evenly between the nearest anchors. Treat these as placeholders |
+
+A `carried` word shares its neighbour's span rather than abutting it, because sharing a time is
+what carrying one means. Two words with the same span are timed as a unit and should be
+highlighted together.
 
 Marking only the exceptions keeps the ordinary case clean and makes the handful of words worth
 reviewing easy to find. A correctly paired song typically has four to six `carried` and no
@@ -108,11 +127,33 @@ reviewing easy to find. A correctly paired song typically has four to six `carri
 There is deliberately no per-word confidence *number*. Nothing continuous produces one, so any
 float here would be one of three constants dressed up as a measurement.
 
+### vtt
+
+```
+WEBVTT
+
+00:00:12.000 --> 00:00:16.500
+The <00:00:12.400>first <00:00:13.100>line
+```
+
+The first word carries no tag because the cue already starts there. Words sharing a time share a
+tag, since WebVTT requires a cue's inline timestamps to strictly increase.
+
+### lrc
+
+```
+[00:12.00]<00:12.00>The <00:12.40>first <00:13.10>line
+```
+
+Enhanced LRC, with a line stamp followed by a stamp per word. Minutes keep counting past sixty,
+as the format has no hours field.
+
 ## Options
 
 | flag | |
 | --- | --- |
-| `-o`, `--out` | where to write the JSON. Defaults to the recording's name with a `.json` extension |
+| `-o`, `--out` | where to write it. Defaults to the recording's name with the format's extension |
+| `--format` | `json`, `vtt` or `lrc`. Defaults to `json` |
 | `--transcript` | reuse a whisper JSON instead of transcribing again |
 | `--model` | model file, also `$LOCKSTEP_MODEL` |
 | `--whisper` | whisper.cpp executable, also `$LOCKSTEP_WHISPER` |
@@ -140,7 +181,7 @@ Below 50% lockstep warns, naming both files:
 
 ```
 $ lockstep recording.mp3 wrong-script.txt
-recording.json: 60 lines (20/55 anchored, 4 rests), 25/300 script words matched (8%), 170 words heard
+recording.json: 55 lines (20/55 anchored), 25/300 script words matched (8%), 170 words heard
 warning: only 8% of wrong-script.txt was heard in recording.mp3. A correctly paired script and
 recording match around 98%, so these two are probably not the same piece, or the model cannot
 hear this language. The timings written are guesses.
@@ -160,8 +201,8 @@ non-English audio, and a recording whose vocal the model genuinely cannot make o
    heard. Its words are used only as clocks.
 3. **Align.** Your script is matched against that transcript with Needleman-Wunsch, so a word
    whisper missed, invented or misheard shifts nothing around it.
-4. **Place.** Each line takes the span of its matched words, lines nobody heard are spread
-   between their timed neighbours, and long silences become rests.
+4. **Place.** Each line takes the span of its matched words, and lines nobody heard are spread
+   between their timed neighbours. Silence is simply the gap left between lines.
 
 ## Finding whisper and the model
 
@@ -227,4 +268,5 @@ and none after.
 cargo test
 ```
 
-`unsafe_code = "forbid"` is set on the crate, so no unsafe can be written in it.
+`unsafe_code = "forbid"` is set on the crate, so no unsafe can be written in it. The minimum
+supported Rust is 1.85, set by clap and verified by building and testing on that toolchain.

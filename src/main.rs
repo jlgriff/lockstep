@@ -2,11 +2,13 @@
 
 mod align;
 mod audio;
+mod export;
 mod script;
 mod timing;
 mod whisper;
 
 use anyhow::{Context, Result};
+use crate::export::Format;
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
@@ -21,6 +23,9 @@ Examples:
 
   lockstep talk.m4a script.txt -o timed.json --model ~/models/ggml-medium.en.bin
       Picks the output path and the model explicitly.
+
+  lockstep song.mp3 lyrics.txt --format vtt
+      Writes song.vtt, which a browser plays natively from a <track> element.
 
   lockstep song.mp3 lyrics.txt --transcript from-ci.json
       Skips transcription and reuses a whisper JSON produced elsewhere. Needs no
@@ -55,9 +60,13 @@ struct Args {
     #[arg(value_name = "SCRIPT")]
     script: PathBuf,
 
-    /// Where to write the timed JSON [default: the recording's name with a .json extension]
+    /// Where to write the result [default: the recording's name with the format's extension]
     #[arg(short, long, value_name = "FILE")]
     out: Option<PathBuf>,
+
+    /// Output format. json carries per-word provenance; vtt and lrc are the standard forms
+    #[arg(long, value_enum, default_value_t = Format::Json)]
+    format: Format,
 
     /// Reuse a whisper.cpp JSON transcript instead of transcribing again
     #[arg(long, value_name = "FILE")]
@@ -101,23 +110,22 @@ fn run(args: &Args, work: &Path) -> Result<()> {
     };
 
     let heard = whisper::parse(&transcript)?;
-    let source = args.script.display().to_string();
-    let (document, report) = timing::build(&lines, &heard, &source, duration)?;
+    let (document, report) = timing::build(&lines, &heard, &args.script, duration)?;
 
     let matched = report.confidence();
-    let out = args.out.clone().unwrap_or_else(|| args.audio.with_extension("json"));
-    let json = serde_json::to_string_pretty(&document)?;
-    std::fs::write(&out, format!("{json}\n"))
+    let out = args
+        .out
+        .clone()
+        .unwrap_or_else(|| args.audio.with_extension(args.format.extension()));
+    std::fs::write(&out, export::render(&document, args.format)?)
         .with_context(|| format!("writing {}", out.display()))?;
 
     println!(
-        "{}: {} lines ({}/{} anchored, {} rests), {}/{} script words matched ({:.0}%), \
-         {} words heard",
+        "{}: {} lines ({}/{} anchored), {}/{} script words matched ({:.0}%), {} words heard",
         out.display(),
         report.lines,
         report.anchored,
         report.script_lines,
-        report.rests,
         report.matched,
         report.script_words,
         matched * 100.0,
