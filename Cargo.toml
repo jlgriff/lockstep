@@ -1,0 +1,22 @@
+[package]
+name = "lockstep"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+description = "Times a known script against its recording, word by word"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive", "env"] }
+hound = "3"
+rubato = "0.16"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+symphonia = { version = "0.5", features = ["all"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[profile.release]
+lto = true
