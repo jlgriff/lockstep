@@ -68,9 +68,9 @@ The second line, punctuation and all
       "end": 16.5,
       "text": "The first line as it is printed",
       "words": [
-        { "t": 12.0, "w": "The" },
-        { "t": 12.4, "w": "first" },
-        { "t": 13.1, "w": "line", "c": "carried" }
+        { "start": 12.0, "text": "The" },
+        { "start": 12.4, "text": "first" },
+        { "start": 13.1, "text": "line", "timing": "carried" }
       ]
     },
     { "start": 20.0, "end": 26.0, "text": "" }
@@ -82,18 +82,22 @@ The second line, punctuation and all
 | --- | --- |
 | `matched` | share of your script the recording was actually heard to say. The number to gate on |
 | `start`, `end` | seconds |
-| `words` | one entry per word as printed, punctuation included, at the time it is reached |
+| `words` | one entry per word as printed, punctuation included |
 | `text: ""` | a rest: the recording is running but nothing is being said |
-| `c` | how a word got its time. **Written only when that time was not measured** |
+
+A word's keys echo a line's, so the same name means the same thing at either level: `start` is
+when it is reached, `text` is what is printed. The one extra key is `timing`, which says how the
+word got its time and is **written only when that time was not measured**.
 
 Rests matter more than they look. A display showing one line at a time will otherwise leave a
 stale line up through an entire intro or break.
 
-`c` is absent when the word aligned to something heard in the recording, and its time is
-measured. Otherwise:
+Top level, `"timing": "aligned"` says how the file was produced. Per word it answers the same
+question at word scale, and is absent when the word aligned to something actually heard:
 
-| `c` | meaning |
+| `timing` | meaning |
 | --- | --- |
+| absent | the word aligned to something heard in the recording. Its time is measured |
 | `carried` | the line was heard but this word was not, so it took a neighbour's time. Usually punctuation, or a word the transcriber misheard |
 | `spread` | nothing in the line was heard, so its words are spaced evenly between the nearest anchors. Treat these as placeholders |
 

@@ -22,13 +22,13 @@ pub enum Source {
     Spread,
 }
 
-/// One word of output, at the time it is reached.
+/// One word of output, at the time it is reached. Its keys echo a line's: same name, same meaning.
 #[derive(Serialize)]
 pub struct Word {
-    pub t: f64,
-    pub w: String,
+    pub start: f64,
+    pub text: String,
     /// Absent when the time came straight from the recording, which is the ordinary case.
-    #[serde(rename = "c", skip_serializing_if = "Option::is_none")]
+    #[serde(rename = "timing", skip_serializing_if = "Option::is_none")]
     pub source: Option<Source>,
 }
 
@@ -186,8 +186,8 @@ fn bridge(timed: Vec<Timed>, duration: f64) -> Vec<Placed> {
                 .into_iter()
                 .enumerate()
                 .map(|(i, word)| Word {
-                    t: word.start.unwrap_or_else(|| slot(start, end, spread, i)),
-                    w: word.text,
+                    start: word.start.unwrap_or_else(|| slot(start, end, spread, i)),
+                    text: word.text,
                     source: (!word.measured)
                         .then_some(if anchored { Source::Carried } else { Source::Spread }),
                 })
@@ -229,7 +229,7 @@ fn finish(placed: Vec<Placed>) -> Vec<Line> {
                 words: line
                     .words
                     .into_iter()
-                    .map(|word| Word { t: round(word.t.max(start)), ..word })
+                    .map(|word| Word { start: round(word.start.max(start)), ..word })
                     .collect(),
             }
         })
@@ -298,8 +298,8 @@ mod tests {
         let (document, _) = build_fixture("one two", &[("one", 10.0), ("two", 10.5)]);
         assert_eq!(document.lines[0].start, 9.7);
         assert_eq!(document.lines[0].end, 11.5);
-        assert_eq!(document.lines[0].words[0].t, 9.7);
-        assert_eq!(document.lines[0].words[1].t, 10.2);
+        assert_eq!(document.lines[0].words[0].start, 9.7);
+        assert_eq!(document.lines[0].words[1].start, 10.2);
     }
 
     #[test]
@@ -314,7 +314,7 @@ mod tests {
         let bridged = &document.lines[1];
         assert_eq!(bridged.text, "three four");
         assert_eq!((bridged.start, bridged.end), (11.5, 15.6));
-        assert_eq!(bridged.words.iter().map(|word| word.t).collect::<Vec<_>>(), [11.5, 13.55]);
+        assert_eq!(bridged.words.iter().map(|word| word.start).collect::<Vec<_>>(), [11.5, 13.55]);
     }
 
     #[test]
@@ -346,7 +346,7 @@ mod tests {
         let (document, _) = build_fixture("one\ntwo", &[("one", 10.0), ("two", 10.0)]);
         assert_eq!(document.lines[0].start, 9.7);
         assert_eq!(document.lines[1].start, 9.71);
-        assert_eq!(document.lines[1].words[0].t, 9.71, "a word never precedes its own line");
+        assert_eq!(document.lines[1].words[0].start, 9.71, "a word never precedes its own line");
     }
 
     #[test]
@@ -355,7 +355,7 @@ mod tests {
         // openers have to look forward for a time and the closer has to look back.
         let (document, _) =
             build_fixture("well now listen here friend", &[("listen", 10.0), ("here", 10.5)]);
-        let times: Vec<f64> = document.lines[0].words.iter().map(|word| word.t).collect();
+        let times: Vec<f64> = document.lines[0].words.iter().map(|word| word.start).collect();
         assert_eq!(times, [9.7, 9.7, 9.7, 10.2, 10.2]);
     }
 
@@ -371,7 +371,7 @@ mod tests {
     fn a_rest_is_written_without_a_words_key() {
         let (document, _) = build_fixture("one", &[("one", 10.0)]);
         let json = serde_json::to_string(&document).unwrap();
-        assert!(json.contains(r#"{"start":9.7,"end":11.0,"text":"one","words":[{"t":9.7,"w":"one"}]}"#));
+        assert!(json.contains(r#"{"start":9.7,"end":11.0,"text":"one","words":[{"start":9.7,"text":"one"}]}"#));
         assert!(json.contains(r#"{"start":11.0,"end":30.0,"text":""}"#));
     }
 
@@ -413,8 +413,8 @@ mod tests {
         let (document, _) =
             build_fixture("well listen here", &[("listen", 10.0), ("here", 10.5)]);
         let json = serde_json::to_string(&document).unwrap();
-        assert!(json.contains(r#"{"t":9.7,"w":"well","c":"carried"}"#), "{json}");
-        assert!(json.contains(r#"{"t":9.7,"w":"listen"},{"t":10.2,"w":"here"}"#), "{json}");
+        assert!(json.contains(r#"{"start":9.7,"text":"well","timing":"carried"}"#), "{json}");
+        assert!(json.contains(r#"{"start":9.7,"text":"listen"},{"start":10.2,"text":"here"}"#), "{json}");
     }
 
     #[test]
