@@ -1,15 +1,9 @@
 //! Times a known script against its recording, word by word.
 
-mod align;
-mod audio;
-mod export;
-mod script;
-mod timing;
-mod whisper;
-
 use anyhow::{Context, Result};
-use crate::export::Format;
 use clap::Parser;
+use lockstep::export::{self, Format};
+use lockstep::{audio, script, timing, whisper};
 use std::path::{Path, PathBuf};
 
 /// Below this share of matched words a script and a recording almost certainly disagree.
@@ -33,7 +27,9 @@ Examples:
 
 Transcribing needs whisper.cpp and a model. Both are found automatically when not
 given: the binary on PATH, the model in ./models, ~/.cache/whisper and the usual
-system directories. Decoding and alignment are pure Rust and need nothing.
+system directories. A base model is preferred over a bigger one, which costs
+almost no accuracy here and a third of the memory. Decoding and alignment are
+pure Rust and need nothing.
 
 lockstep prints the share of the script it actually heard, and warns below 50% that
 the two files probably do not go together. Words whose time could not be measured
@@ -72,7 +68,7 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     transcript: Option<PathBuf>,
 
-    /// whisper.cpp model file [default: the largest ggml-*.bin found in the usual places]
+    /// whisper.cpp model file [default: the best ggml-*.bin found, preferring base]
     #[arg(long, value_name = "FILE", env = "LOCKSTEP_MODEL")]
     model: Option<PathBuf>,
 

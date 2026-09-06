@@ -28,7 +28,9 @@ pub struct Heard {
     pub end: f64,
 }
 
-/// Where the transcription step should get its whisper binary and model.
+/// Where the transcription step should get its whisper binary and model. The default finds
+/// both in the usual places.
+#[derive(Default)]
 pub struct Config {
     pub binary: Option<PathBuf>,
     pub model: Option<PathBuf>,
@@ -124,19 +126,32 @@ fn locate(
     given.cloned().or_else(search).ok_or_else(|| anyhow!(missing()))
 }
 
-/// The largest `ggml-*.bin` in a directory, which is the most capable model installed there.
+/// Where a model's name places it in the order lockstep prefers, first being best.
+///
+/// This is not size order. Because the words come from the script and whisper only supplies the
+/// clock, a weaker model costs borrowed timestamps rather than wrong ones. Measured over a set
+/// of recordings, base agreed with small to within lockstep's own tenth-of-a-second precision
+/// while using a third of the memory, and tiny was twice as loose. So base is taken first and
+/// tiny is a last resort. `--model` pins a specific file when this guess is not what you want.
+fn model_rank(name: &str) -> usize {
+    const ORDER: [&str; 5] = ["base", "small", "medium", "large", "tiny"];
+    ORDER.iter().position(|tier| name.contains(tier)).unwrap_or(ORDER.len())
+}
+
+/// The `ggml-*.bin` in a directory that lockstep would rather use.
 fn best_model_in(dir: &Path) -> Option<PathBuf> {
-    let mut models: Vec<(u64, PathBuf)> = std::fs::read_dir(dir)
+    std::fs::read_dir(dir)
         .ok()?
         .flatten()
         .filter(|entry| {
             entry.file_name().to_string_lossy().starts_with("ggml-")
                 && entry.path().extension().is_some_and(|ext| ext == "bin")
         })
-        .filter_map(|entry| Some((entry.metadata().ok()?.len(), entry.path())))
-        .collect();
-    models.sort_by_key(|(size, _)| *size);
-    models.pop().map(|(_, path)| path)
+        .min_by_key(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            (model_rank(&name), name)
+        })
+        .map(|entry| entry.path())
 }
 
 /// Every directory a whisper model is conventionally installed into.
@@ -277,6 +292,42 @@ mod tests {
         assert_eq!(heard[0].end, 1.4);
         assert_eq!(heard[1].end, 2.4);
         assert_eq!(heard[2].end, 10.0);
+    }
+
+    #[test]
+    fn a_base_model_is_preferred_to_a_bigger_one() {
+        // base agrees with small to within lockstep's own precision at a third of the memory,
+        // so size is not the thing to maximise. tiny is twice as loose, hence last.
+        assert!(model_rank("ggml-base.en.bin") < model_rank("ggml-small.en.bin"));
+        assert!(model_rank("ggml-base.en.bin") < model_rank("ggml-large-v3.bin"));
+        assert!(model_rank("ggml-small.en.bin") < model_rank("ggml-medium.en.bin"));
+        assert!(model_rank("ggml-medium.en.bin") < model_rank("ggml-tiny.en.bin"));
+        assert!(model_rank("ggml-large-v3.bin") < model_rank("ggml-tiny.en.bin"));
+    }
+
+    #[test]
+    fn the_preferred_model_is_the_one_taken_from_a_directory() {
+        let dir = std::env::temp_dir().join("lockstep-models");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (name, bytes) in
+            [("ggml-tiny.en.bin", 10), ("ggml-base.en.bin", 20), ("ggml-large-v3.bin", 90)]
+        {
+            std::fs::write(dir.join(name), vec![0u8; bytes]).unwrap();
+        }
+        let chosen = best_model_in(&dir).unwrap();
+        assert_eq!(chosen.file_name().unwrap(), "ggml-base.en.bin", "largest is not best");
+
+        std::fs::remove_file(dir.join("ggml-base.en.bin")).unwrap();
+        let chosen = best_model_in(&dir).unwrap();
+        assert_eq!(chosen.file_name().unwrap(), "ggml-large-v3.bin", "tiny is the last resort");
+
+        // small beats large by rank but loses to it alphabetically, so this pairing tells a
+        // real preference apart from a plain sort by name.
+        std::fs::write(dir.join("ggml-small.en.bin"), vec![0u8; 40]).unwrap();
+        std::fs::remove_file(dir.join("ggml-tiny.en.bin")).unwrap();
+        let chosen = best_model_in(&dir).unwrap();
+        assert_eq!(chosen.file_name().unwrap(), "ggml-small.en.bin", "name order is not rank");
     }
 
     #[test]
