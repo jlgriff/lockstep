@@ -172,7 +172,8 @@ when the page changes. Font shaping keeps it centered beneath proportional text.
 `--highlight-words false` disables all per-word color and animation while preserving the lyric
 pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
 which defaults to `true`. Notes appear centered only when no lyric page is visible for at least
-one second, so breaths and other short gaps remain blank.
+one second, so breaths and other short gaps remain blank. They remain enabled by default;
+`--rest-notes false` hides them, and `Style::show_rest_notes` provides the library equivalent.
 
 The palette and timing are design choices: strong text/background contrast follows
 [W3C readability guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),
@@ -183,7 +184,7 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
   --width 1280 --height 720 --frames-per-second 24 \
   --background-color '#112233' --text-color '#DDEEFF' \
   --highlight-color '#FFCC00' --font 'Avenir Next' --font-size 64 \
-  --lines 3 --rest-text '♪ ♫' --highlight-style dot
+  --lines 3 --rest-text '♪ ♫' --rest-notes false --highlight-style dot
 ```
 
 One image without timestamps stays for the whole video. Images fit inside the canvas, centered

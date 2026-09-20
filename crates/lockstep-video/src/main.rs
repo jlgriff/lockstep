@@ -61,6 +61,10 @@ struct Args {
     #[arg(long, default_value_t = Style::default().rest_text)]
     rest_text: String,
 
+    /// Show the rest text during lyric-free intervals
+    #[arg(long = "rest-notes", action = clap::ArgAction::Set, default_value_t = Style::default().show_rest_notes)]
+    show_rest_notes: bool,
+
     /// One image defaults to the whole track; repeated images each require a non-overlapping range
     #[arg(long, value_name = "[HH:MM:SS.mmm..HH:MM:SS.mmm=]IMAGE")]
     background_image: Vec<String>,
@@ -96,6 +100,7 @@ fn main() -> Result<()> {
             highlight_style: args.highlight_style,
             highlight_transition_ms: args.highlight_transition_ms,
             rest_text: args.rest_text,
+            show_rest_notes: args.show_rest_notes,
             background_images,
         },
     })?;

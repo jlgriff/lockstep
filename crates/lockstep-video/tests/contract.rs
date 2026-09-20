@@ -160,6 +160,23 @@ fn notes_require_a_full_second_without_visible_lyrics() {
     );
 }
 
+/// Hides instrumental markers without changing lyric page content.
+#[test]
+fn rest_notes_can_be_disabled() {
+    let style = Style {
+        line_count: 2,
+        highlight_words: false,
+        show_rest_notes: false,
+        ..style()
+    };
+    let plan = plan(&document(), &style).unwrap();
+    let rendered = events(&plan.subtitles);
+    assert_eq!(
+        rendered.iter().map(|event| event.3).collect::<Vec<_>>(),
+        ["One, two", "Three four", "Five"]
+    );
+}
+
 /// Keeps punctuation outside timed words visible without highlighting it as speech.
 #[test]
 fn untimed_trailing_punctuation_remains_plain_and_visible() {

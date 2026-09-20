@@ -8,6 +8,7 @@ if [[ ${1:-} == --help || $# -lt 2 ]]; then
     printf 'Use --forced-align immediately after LYRICS for supplied-text alignment; run scripts/setup-alignment.sh first.\n'
     printf 'Pass --font-size PIXELS among VIDEO_OPTIONS to resize the lyrics.\n'
     printf 'Pass --highlight-style dot for a soft moving indicator.\n'
+    printf 'Pass --rest-notes false to hide musical notes during lyric-free intervals.\n'
     if [[ ${1:-} == --help ]]; then exit 0; else exit 1; fi
 fi
 

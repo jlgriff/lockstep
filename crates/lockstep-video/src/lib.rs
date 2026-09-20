@@ -85,6 +85,7 @@ pub struct Style {
     pub highlight_style: HighlightStyle,
     pub highlight_transition_ms: u32,
     pub rest_text: String,
+    pub show_rest_notes: bool,
     pub background_images: Vec<BackgroundImage>,
 }
 
@@ -105,6 +106,7 @@ impl Default for Style {
             highlight_style: HighlightStyle::Color,
             highlight_transition_ms: 80,
             rest_text: "♪ ♪ ♪".to_string(),
+            show_rest_notes: true,
             background_images: Vec::new(),
         }
     }
@@ -489,9 +491,9 @@ fn row_y(style: &Style, slot: usize) -> i64 {
         + (2 * slot as i64 + 1 - style.line_count as i64) * i64::from(style.font_size) * 3 / 4
 }
 
-/// Centers musical notes only during lyric-free intervals long enough to avoid flashing.
+/// Centers enabled rest text only during lyric-free intervals long enough to avoid flashing.
 fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
-    if end - start < MINIMUM_REST_SECONDS {
+    if !style.show_rest_notes || end - start < MINIMUM_REST_SECONDS {
         return;
     }
     let y = i64::from(style.height) / 2;
