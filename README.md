@@ -171,7 +171,8 @@ word. The dot holds through breaths, glides into place before the next word star
 when the page changes. Font shaping keeps it centered beneath proportional text.
 `--highlight-words false` disables all per-word color and animation while preserving the lyric
 pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
-which defaults to `true`. Notes appear centered only while no lyric page is visible.
+which defaults to `true`. Notes appear centered only when no lyric page is visible for at least
+one second, so breaths and other short gaps remain blank.
 
 The palette and timing are design choices: strong text/background contrast follows
 [W3C readability guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),

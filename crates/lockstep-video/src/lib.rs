@@ -489,8 +489,11 @@ fn row_y(style: &Style, slot: usize) -> i64 {
         + (2 * slot as i64 + 1 - style.line_count as i64) * i64::from(style.font_size) * 3 / 4
 }
 
-/// Centers musical notes during intervals with no visible lyrics.
+/// Centers musical notes only during lyric-free intervals long enough to avoid flashing.
 fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
+    if end - start < MINIMUM_REST_SECONDS {
+        return;
+    }
     let y = i64::from(style.height) / 2;
     let text = format!(
         r"{{\an5\pos({},{y})}}{}",
@@ -510,6 +513,7 @@ struct IndicatorTarget {
 const INDICATOR_FADE_MS: u32 = 120;
 const INDICATOR_TRAVEL_MS: u32 = 160;
 const ASS_ADVANCE_SCALE: f64 = 0.85;
+const MINIMUM_REST_SECONDS: f64 = 1.0;
 const INDICATOR_PATH: &str =
     "m 0 50 b 0 22 22 0 50 0 b 78 0 100 22 100 50 b 100 78 78 100 50 100 b 22 100 0 78 0 50";
 

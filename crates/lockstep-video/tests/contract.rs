@@ -127,7 +127,7 @@ fn disabling_highlights_preserves_plain_pages_and_rests() {
     assert!(!plain.subtitles.contains(r"\t("));
     assert_eq!(
         plain_events.iter().map(|event| event.3).collect::<Vec<_>>(),
-        ["♪ ♫", "One, two", "Three four", "♪ ♫", "Five", "♪ ♫"]
+        ["♪ ♫", "One, two", "Three four", "Five", "♪ ♫"]
     );
     assert_eq!(
         plain_events
@@ -141,9 +141,9 @@ fn disabling_highlights_preserves_plain_pages_and_rests() {
     );
 }
 
-/// Shows musical notes only while no lyric page is visible.
+/// Suppresses musical notes unless the lyric-free interval lasts at least one second.
 #[test]
-fn notes_never_overlap_visible_lyrics() {
+fn notes_require_a_full_second_without_visible_lyrics() {
     let style = Style {
         line_count: 2,
         ..style()
@@ -156,11 +156,7 @@ fn notes_never_overlap_visible_lyrics() {
         .collect::<Vec<_>>();
     assert_eq!(
         note_ranges,
-        [
-            ("0:00:00.00", "0:00:01.23"),
-            ("0:00:07.30", "0:00:08.00"),
-            ("0:00:09.12", "0:00:10.37"),
-        ]
+        [("0:00:00.00", "0:00:01.23"), ("0:00:09.12", "0:00:10.37"),]
     );
 }
 
@@ -329,7 +325,7 @@ fn uses_the_configured_typography_without_highlighting_plain_text() {
     }
 }
 
-/// Covers the entire track exactly once with correctly timed lyrics or musical notes.
+/// Schedules every lyric span and only instrumental breaks that meet the duration threshold.
 #[test]
 fn schedules_words_and_rests_without_extra_or_missing_events() {
     let plan = plan(&document(), &style()).unwrap();
@@ -350,7 +346,6 @@ fn schedules_words_and_rests_without_extra_or_missing_events() {
                 "Lyrics",
                 r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Three {\rPlain\t(499,500,\1c&H0000CCFF&)\t(2229,2230,\1c&H00FFEEDD&)}four"
             ),
-            ("0:00:07.30", "0:00:08.00", "Plain", "♪ ♫"),
             (
                 "0:00:08.00",
                 "0:00:09.12",
