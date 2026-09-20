@@ -50,7 +50,10 @@ pub fn parse(text: &str) -> Vec<Line> {
             tokens: row
                 .split_whitespace()
                 .flat_map(|word| word.split_inclusive(['—', '–', '-']))
-                .map(|raw| Token { raw: raw.to_string(), key: key(raw) })
+                .map(|raw| Token {
+                    raw: raw.to_string(),
+                    key: key(raw),
+                })
                 .collect(),
         })
         .collect()
@@ -65,9 +68,15 @@ mod tests {
     fn em_dashes_separate_alignment_words() {
         let lines = parse("The servant—whom obey?\nHe turned—the road lay bare");
         assert_eq!(lines[0].text, "The servant—whom obey?");
-        assert_eq!(lines[0].keys().collect::<Vec<_>>(), ["the", "servant", "whom", "obey"]);
+        assert_eq!(
+            lines[0].keys().collect::<Vec<_>>(),
+            ["the", "servant", "whom", "obey"]
+        );
         assert_eq!(lines[0].tokens[1].raw, "servant—");
-        assert_eq!(lines[1].keys().collect::<Vec<_>>(), ["he", "turned", "the", "road", "lay", "bare"]);
+        assert_eq!(
+            lines[1].keys().collect::<Vec<_>>(),
+            ["he", "turned", "the", "road", "lay", "bare"]
+        );
     }
 
     #[test]
@@ -88,11 +97,13 @@ mod tests {
 
     #[test]
     fn parse_drops_bracketed_section_rows() {
-        let lines = parse(
-            "[Verse 1]\nFirst line\n  [Chorus – tenor with choir behind]  \nSecond line\n",
-        );
+        let lines =
+            parse("[Verse 1]\nFirst line\n  [Chorus – tenor with choir behind]  \nSecond line\n");
         assert_eq!(
-            lines.iter().map(|line| line.text.as_str()).collect::<Vec<_>>(),
+            lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
             ["First line", "Second line"]
         );
     }

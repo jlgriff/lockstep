@@ -141,6 +141,19 @@ fn disabling_highlights_preserves_plain_pages_and_rests() {
     );
 }
 
+/// Keeps punctuation outside timed words visible without highlighting it as speech.
+#[test]
+fn untimed_trailing_punctuation_remains_plain_and_visible() {
+    let mut document = document();
+    document.lines.truncate(1);
+    document.lines[0].text = "One —".into();
+    document.lines[0].words = vec![word(1.23, 3.01, "One")];
+    let subtitles = plan(&document, &style()).unwrap().subtitles;
+    let lyric = lyrics(&subtitles)[0];
+    assert!(lyric.ends_with(" —"), "{lyric}");
+    assert!(!lyric.ends_with(r"}—"), "{lyric}");
+}
+
 /// Refuses future JSON versions before interpreting their timing schema.
 #[test]
 fn rejects_an_unsupported_lockstep_format_version() {

@@ -17,8 +17,17 @@ const BINARIES: [&str; 3] = ["whisper-cli", "whisper-cpp", "whisper"];
 /// The alignment-heads presets whisper.cpp ships. A preset it does not know is a hard error
 /// several seconds into a run, so a guess is checked against this before being passed on.
 const DTW_PRESETS: [&str; 11] = [
-    "tiny", "tiny.en", "base", "base.en", "small", "small.en", "medium", "medium.en", "large.v1",
-    "large.v2", "large.v3",
+    "tiny",
+    "tiny.en",
+    "base",
+    "base.en",
+    "small",
+    "small.en",
+    "medium",
+    "medium.en",
+    "large.v1",
+    "large.v2",
+    "large.v3",
 ];
 
 /// A word whisper heard, reduced to its match key and the span it occupies.
@@ -64,7 +73,9 @@ struct Partial {
 /// True for whisper's own markers and for the filler it emits over instrumental passages.
 fn is_noise(text: &str) -> bool {
     text.starts_with('[')
-        || text.chars().all(|c| c.is_whitespace() || c == '\u{266a}' || c == '\u{266b}')
+        || text
+            .chars()
+            .all(|c| c.is_whitespace() || c == '\u{266a}' || c == '\u{266b}')
 }
 
 /// Onset of a word's final unbroken run of tokens, ignoring strays timed far too early.
@@ -132,7 +143,10 @@ fn locate(
     search: impl FnOnce() -> Option<PathBuf>,
     missing: impl FnOnce() -> String,
 ) -> Result<PathBuf> {
-    given.cloned().or_else(search).ok_or_else(|| anyhow!(missing()))
+    given
+        .cloned()
+        .or_else(search)
+        .ok_or_else(|| anyhow!(missing()))
 }
 
 /// Where a model's name places it in the order lockstep prefers, first being best.
@@ -144,7 +158,10 @@ fn locate(
 /// tiny is a last resort. `--model` pins a specific file when this guess is not what you want.
 fn model_rank(name: &str) -> usize {
     const ORDER: [&str; 5] = ["base", "small", "medium", "large", "tiny"];
-    ORDER.iter().position(|tier| name.contains(tier)).unwrap_or(ORDER.len())
+    ORDER
+        .iter()
+        .position(|tier| name.contains(tier))
+        .unwrap_or(ORDER.len())
 }
 
 /// The `ggml-*.bin` in a directory that lockstep would rather use.
@@ -219,7 +236,11 @@ pub fn transcribe(wav: &Path, config: &Config) -> Result<String> {
                 "no whisper model found in {}. Download one from \
                  https://huggingface.co/ggerganov/whisper.cpp, then pass --model or set \
                  LOCKSTEP_MODEL.",
-                model_dirs().iter().map(|dir| dir.display().to_string()).collect::<Vec<_>>().join(", ")
+                model_dirs()
+                    .iter()
+                    .map(|dir| dir.display().to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
             )
         },
     )?;
@@ -229,15 +250,33 @@ pub fn transcribe(wav: &Path, config: &Config) -> Result<String> {
     };
     let out = wav.with_extension("");
     let mut command = Command::new(&binary);
-    command.args(["-m".as_ref(), model.as_os_str(), "-f".as_ref(), wav.as_os_str()])
+    command
+        .args([
+            "-m".as_ref(),
+            model.as_os_str(),
+            "-f".as_ref(),
+            wav.as_os_str(),
+        ])
         .args(["-nfa", "-ml", "1", "-sow", "-oj", "-ojf", "-dtw", &dtw])
         .args(["-of".as_ref(), out.as_os_str()]);
-    if config.no_gpu { command.arg("-ng"); }
-    eprintln!("Transcribing with {}{}...", model.display(), if config.no_gpu { " on CPU" } else { "" });
-    let output = command.output()
+    if config.no_gpu {
+        command.arg("-ng");
+    }
+    eprintln!(
+        "Transcribing with {}{}...",
+        model.display(),
+        if config.no_gpu { " on CPU" } else { "" }
+    );
+    let output = command
+        .output()
         .with_context(|| format!("running {}", binary.display()))?;
     if !output.status.success() {
-        bail!("{} exited with {}: {}", binary.display(), output.status, String::from_utf8_lossy(&output.stderr));
+        bail!(
+            "{} exited with {}: {}",
+            binary.display(),
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 
     let json = out.with_extension("json");
@@ -254,7 +293,10 @@ mod tests {
             .iter()
             .map(|(text, t_dtw)| format!(r#"{{"text":{text:?},"t_dtw":{t_dtw}}}"#))
             .collect();
-        format!(r#"{{"transcription":[{{"tokens":[{}]}}]}}"#, tokens.join(","))
+        format!(
+            r#"{{"transcription":[{{"tokens":[{}]}}]}}"#,
+            tokens.join(",")
+        )
     }
 
     #[test]
@@ -274,7 +316,13 @@ mod tests {
             ("[_TT_50]", -1),
         ]))
         .unwrap();
-        assert_eq!(heard.iter().map(|word| word.key.as_str()).collect::<Vec<_>>(), ["one"]);
+        assert_eq!(
+            heard
+                .iter()
+                .map(|word| word.key.as_str())
+                .collect::<Vec<_>>(),
+            ["one"]
+        );
     }
 
     #[test]
@@ -298,7 +346,13 @@ mod tests {
     /// Keeps the onset and held duration when sentence punctuation arrives much later than the sung word.
     #[test]
     fn punctuation_after_a_held_note_does_not_replace_the_word_onset() {
-        let heard = parse(&transcript(&[(" whom", 5340), (" obey", 5394), (".", 5698), (" A", 6002)])).unwrap();
+        let heard = parse(&transcript(&[
+            (" whom", 5340),
+            (" obey", 5394),
+            (".", 5698),
+            (" A", 6002),
+        ]))
+        .unwrap();
         assert_eq!(heard[1].key, "obey");
         assert_eq!(heard[1].start, 53.94);
         assert_eq!(heard[1].end, 56.98);
@@ -306,7 +360,12 @@ mod tests {
 
     #[test]
     fn a_word_ends_at_the_next_one_or_after_a_second_whichever_is_sooner() {
-        let heard = parse(&transcript(&[(" one", 100), (" two", 140), (" three", 900)])).unwrap();
+        let heard = parse(&transcript(&[
+            (" one", 100),
+            (" two", 140),
+            (" three", 900),
+        ]))
+        .unwrap();
         assert_eq!(heard[0].end, 1.4);
         assert_eq!(heard[1].end, 2.4);
         assert_eq!(heard[2].end, 10.0);
@@ -328,38 +387,65 @@ mod tests {
         let dir = std::env::temp_dir().join("lockstep-models");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        for (name, bytes) in
-            [("ggml-tiny.en.bin", 10), ("ggml-base.en.bin", 20), ("ggml-large-v3.bin", 90)]
-        {
+        for (name, bytes) in [
+            ("ggml-tiny.en.bin", 10),
+            ("ggml-base.en.bin", 20),
+            ("ggml-large-v3.bin", 90),
+        ] {
             std::fs::write(dir.join(name), vec![0u8; bytes]).unwrap();
         }
         let chosen = best_model_in(&dir).unwrap();
-        assert_eq!(chosen.file_name().unwrap(), "ggml-base.en.bin", "largest is not best");
+        assert_eq!(
+            chosen.file_name().unwrap(),
+            "ggml-base.en.bin",
+            "largest is not best"
+        );
 
         std::fs::remove_file(dir.join("ggml-base.en.bin")).unwrap();
         let chosen = best_model_in(&dir).unwrap();
-        assert_eq!(chosen.file_name().unwrap(), "ggml-large-v3.bin", "tiny is the last resort");
+        assert_eq!(
+            chosen.file_name().unwrap(),
+            "ggml-large-v3.bin",
+            "tiny is the last resort"
+        );
 
         // small beats large by rank but loses to it alphabetically, so this pairing tells a
         // real preference apart from a plain sort by name.
         std::fs::write(dir.join("ggml-small.en.bin"), vec![0u8; 40]).unwrap();
         std::fs::remove_file(dir.join("ggml-tiny.en.bin")).unwrap();
         let chosen = best_model_in(&dir).unwrap();
-        assert_eq!(chosen.file_name().unwrap(), "ggml-small.en.bin", "name order is not rank");
+        assert_eq!(
+            chosen.file_name().unwrap(),
+            "ggml-small.en.bin",
+            "name order is not rank"
+        );
     }
 
     #[test]
     fn the_dtw_preset_follows_the_model_filename() {
-        assert_eq!(dtw_preset(Path::new("ggml-small.en.bin")).unwrap(), "small.en");
-        assert_eq!(dtw_preset(Path::new("/m/ggml-large-v3.bin")).unwrap(), "large.v3");
-        assert_eq!(dtw_preset(Path::new("ggml-base.en-q5_1.bin")).unwrap(), "base.en");
+        assert_eq!(
+            dtw_preset(Path::new("ggml-small.en.bin")).unwrap(),
+            "small.en"
+        );
+        assert_eq!(
+            dtw_preset(Path::new("/m/ggml-large-v3.bin")).unwrap(),
+            "large.v3"
+        );
+        assert_eq!(
+            dtw_preset(Path::new("ggml-base.en-q5_1.bin")).unwrap(),
+            "base.en"
+        );
     }
 
     #[test]
     fn a_name_that_implies_no_preset_asks_for_dtw_instead_of_guessing() {
         // whisper rejects an unknown preset several seconds into a run, with an error naming
         // neither the model nor the flag that would fix it.
-        for name in ["/models/whisper-small.bin", "model.bin", "ggml-small.en-tdrz.bin"] {
+        for name in [
+            "/models/whisper-small.bin",
+            "model.bin",
+            "ggml-small.en-tdrz.bin",
+        ] {
             let error = dtw_preset(Path::new(name)).unwrap_err().to_string();
             assert!(error.contains("--dtw"), "{name}: {error}");
             assert!(error.contains("small.en"), "{name}: {error}");

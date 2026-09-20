@@ -8,10 +8,11 @@ follow-along transcript for something that is not music at all.
 
 The words in the output always come from your script, never from the transcriber. Missing or
 misheard words borrow neighboring timings, which can produce grouped highlights and inaccurate
-word boundaries. This pipeline matches text against a transcript; it does not yet force-align
-the supplied script against the audio. The lyrics are not passed to Whisper.
+word boundaries in the default transcription mode. `--forced-align` instead sends the
+supplied lyrics directly to an acoustic aligner and rejects incomplete or invalid results.
 
-A Rust library with a CLI on top. 3 MB binary, ~3 MB of memory however long the recording is.
+A Rust library with a CLI on top. Audio decoding streams through bounded buffers;
+the optional forced-alignment backend uses additional memory for its model and alignment path.
 
 ## Install
 
@@ -30,8 +31,48 @@ curl -L -o ~/.cache/whisper/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-lockstep finds both on its own from there. Decoding and alignment are pure Rust — only
-transcription needs anything installed.
+lockstep finds both on its own from there. Decoding and transcript matching are pure Rust.
+Transcription and optional acoustic forced alignment use external model runtimes.
+
+### Forced alignment
+
+From the repository, install the optional backend once, then generate timings:
+
+```sh
+./scripts/setup-alignment.sh
+target/release/lockstep "song.mp3" "lyrics.md" --forced-align -o "song.forced.json"
+```
+
+This command produces timing JSON only. It does not render a video. Setup creates an isolated
+`.venv-align` environment and builds the Rust binary. The acoustic model downloads on first use.
+Set `--alignment-python` or `LOCKSTEP_ALIGNMENT_PYTHON` when using another environment or running
+outside the repository. Python 3.14 on macOS was used for the supplied-song comparison.
+
+Rust handles bracket removal, original text, audio decoding, validation, and JSON/VTT/LRC output.
+A small embedded Python adapter uses the [CTC aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner)
+model and normalization helpers. A local Viterbi recurrence handles tied scores and repeated
+letters; it avoids an upstream tie-selection error found by a synthetic test. Instrumental gaps
+are allowed before, between, and after words. Word boundaries exclude blank padding.
+No Whisper transcription, lyric prompt, neighboring-word copying, or fixed word-duration cap is used.
+
+The default model is `MahmoudAshraf/mms-300m-1130-forced-aligner`; its model card declares
+[CC-BY-NC-4.0](https://huggingface.co/MahmoudAshraf/mms-300m-1130-forced-aligner).
+`--alignment-model` accepts another compatible CTC model or a local model directory;
+`--alignment-language` defaults to the ISO 639-3 code `eng` for normalization.
+Other models and languages have not been validated here. Write numbers as sung words.
+
+Forced results include `alignment.method: "forced"`. Their `alignment.rate` describes supplied-word
+coverage, not independent recognition or timing accuracy. Incorrect lyrics can still align to audio;
+listen to the result before treating it as verified. Missing, reordered, overlapping, zero-length,
+or out-of-track word spans fail before an output file is written. `--keep` retains the decoded WAV
+and raw `aligned-words.json` for inspection. `--transcript` cannot be combined with
+`--forced-align`. Whisper options and their environment variables have no effect in forced mode.
+
+Run the backend's synthetic acoustic-boundary and repeated-letter tests after setup:
+
+```sh
+.venv-align/bin/python tests/forced_backend.py
+```
 
 ## Use
 
@@ -67,6 +108,10 @@ two timing anchors while keeping their original punctuation on screen.
 | `--dtw` | alignment-heads preset, if the model's filename does not imply one |
 | `--no-gpu` | run Whisper on CPU when GPU/Metal is unavailable |
 | `--keep` | keep the intermediate WAV and transcript, and say where |
+| `--forced-align` | align supplied lyrics directly to audio using the optional CTC backend |
+| `--alignment-python` | Python executable for forced alignment; also `$LOCKSTEP_ALIGNMENT_PYTHON` |
+| `--alignment-model` | CTC model name or directory |
+| `--alignment-language` | normalization language in ISO 639-3 form; defaults to `eng` |
 
 ## Lyric videos
 
@@ -103,6 +148,14 @@ model or Whisper executable. To use pre-existing timing JSON directly:
 cargo build --release -p lockstep-video
 target/release/lockstep-video recording.json recording.mp3 -o recording.mp4
 ```
+
+After alignment setup, the combined workflow accepts `--forced-align` immediately after the lyrics:
+
+```sh
+./scripts/lyric-video.sh "song.mp3" "lyrics.md" --forced-align --background-color '#0B1730'
+```
+
+That combined command also renders a video. Use `lockstep --forced-align` alone for timing work.
 
 Defaults: dark blue (`#0B1730`) 1920x1080 canvas, white 72-pixel sans-serif text, soft cyan
 (`#67E8F9`) for the active word, two lines per page, and 30 FPS. Each page shows its lines
@@ -168,8 +221,9 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
 }
 ```
 
-Times are seconds. `alignment.rate` is the share of your script the recording was heard to say —
-the number to gate on. `version` is there so a consumer can refuse a shape it does not know.
+Times are seconds. In transcription mode, `alignment.rate` is the share of your script matched
+against what Whisper heard. With `alignment.method: "forced"`, it measures supplied-word coverage
+and cannot detect a mismatched recording. `version` lets consumers refuse an unknown shape.
 
 A line's `start` is its display time, up to 300ms before the first word. Word starts and ends
 retain their recorded timing; the display lead does not shift or shorten them. Words can have

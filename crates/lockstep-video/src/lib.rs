@@ -523,6 +523,7 @@ fn active_word_text(line: &Line, display_start: f64, event_end: f64, style: &Sty
         }
         write!(text, "}}{}", escape_text(&word.text)).unwrap();
     }
+    text.push_str(&escape_text(remaining));
     text
 }
 

@@ -47,8 +47,8 @@ struct Source {
 
 /// Opens a recording's first audio track.
 fn open(path: &Path) -> Result<Source> {
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("opening audio {}", path.display()))?;
+    let file =
+        std::fs::File::open(path).with_context(|| format!("opening audio {}", path.display()))?;
     let stream = MediaSourceStream::new(Box::new(file), Default::default());
 
     let mut hint = Hint::new();
@@ -58,7 +58,10 @@ fn open(path: &Path) -> Result<Source> {
 
     // Gapless playback trims the encoder's delay and padding, so the duration measured here is
     // the one a player will report for the same file.
-    let options = FormatOptions { enable_gapless: true, ..Default::default() };
+    let options = FormatOptions {
+        enable_gapless: true,
+        ..Default::default()
+    };
     let probed = symphonia::default::get_probe()
         .format(&hint, stream, &options, &MetadataOptions::default())
         .with_context(|| format!("recognising the format of {}", path.display()))?;
@@ -78,12 +81,22 @@ fn open(path: &Path) -> Result<Source> {
         .make(&track.codec_params, &DecoderOptions::default())
         .with_context(|| format!("no decoder for {}", path.display()))?;
 
-    Ok(Source { format: probed.format, track: id, rate, decoder })
+    Ok(Source {
+        format: probed.format,
+        track: id,
+        rate,
+        decoder,
+    })
 }
 
 /// Decodes a recording to mono 16 kHz, handing it to `sink` in pieces, and returns its length.
 pub fn stream(source: &Path, sink: &mut impl FnMut(&[f32])) -> Result<f64> {
-    let Source { mut format, track: track_id, rate, mut decoder } = open(source)?;
+    let Source {
+        mut format,
+        track: track_id,
+        rate,
+        mut decoder,
+    } = open(source)?;
 
     let mut resampler = match rate == SAMPLE_RATE {
         true => None,
@@ -102,9 +115,7 @@ pub fn stream(source: &Path, sink: &mut impl FnMut(&[f32])) -> Result<f64> {
     loop {
         let packet = match format.next_packet() {
             Ok(packet) => packet,
-            Err(Symphonia::IoError(error))
-                if error.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
+            Err(Symphonia::IoError(error)) if error.kind() == std::io::ErrorKind::UnexpectedEof => {
                 break
             }
             Err(error) => return Err(error).context("reading the next packet"),
@@ -130,7 +141,10 @@ pub fn stream(source: &Path, sink: &mut impl FnMut(&[f32])) -> Result<f64> {
 
         let before = pending.len();
         pending.extend(
-            buffer.samples().chunks(channels).map(|frame| frame.iter().sum::<f32>() / channels as f32),
+            buffer
+                .samples()
+                .chunks(channels)
+                .map(|frame| frame.iter().sum::<f32>() / channels as f32),
         );
         frames += (pending.len() - before) as u64;
 
@@ -138,7 +152,9 @@ pub fn stream(source: &Path, sink: &mut impl FnMut(&[f32])) -> Result<f64> {
             Some(resampler) => {
                 while pending.len() >= resampler.input_frames_next() {
                     let take = resampler.input_frames_next();
-                    let done = resampler.process(&[&pending[..take]], None).context("resampling")?;
+                    let done = resampler
+                        .process(&[&pending[..take]], None)
+                        .context("resampling")?;
                     out.push(&done[0]);
                     pending.drain(..take);
                 }
@@ -220,7 +236,9 @@ mod tests {
             // A slow sine, well under the 8 kHz the 16 kHz output can carry.
             let value = ((frame as f64 / rate as f64) * 220.0 * std::f64::consts::TAU).sin();
             for _ in 0..channels {
-                writer.write_sample((value * i16::MAX as f64) as i16).unwrap();
+                writer
+                    .write_sample((value * i16::MAX as f64) as i16)
+                    .unwrap();
             }
         }
         writer.finalize().unwrap();
@@ -238,8 +256,14 @@ mod tests {
         .unwrap();
 
         assert!((duration - 10.0).abs() < 0.01, "duration was {duration}");
-        assert!((total as f64 - 160_000.0).abs() < 2_000.0, "got {total} samples");
-        assert!(largest <= CHUNK, "handed over {largest} samples in one piece");
+        assert!(
+            (total as f64 - 160_000.0).abs() < 2_000.0,
+            "got {total} samples"
+        );
+        assert!(
+            largest <= CHUNK,
+            "handed over {largest} samples in one piece"
+        );
     }
 
     #[test]
@@ -251,7 +275,11 @@ mod tests {
         assert!((duration - 0.5).abs() < 0.01);
         assert_eq!(samples.len(), 8_000);
         let expected = ((100.0 / SAMPLE_RATE as f64) * 220.0 * std::f64::consts::TAU).sin();
-        assert!((samples[100] as f64 - expected).abs() < 0.01, "got {}", samples[100]);
+        assert!(
+            (samples[100] as f64 - expected).abs() < 0.01,
+            "got {}",
+            samples[100]
+        );
     }
 
     #[test]
@@ -269,13 +297,22 @@ mod tests {
         for frame in 0..44_100 {
             let loud = frame >= 22_050;
             let value = ((frame as f64 / 44_100.0) * 440.0 * std::f64::consts::TAU).sin();
-            writer.write_sample(if loud { (value * i16::MAX as f64) as i16 } else { 0 }).unwrap();
+            writer
+                .write_sample(if loud {
+                    (value * i16::MAX as f64) as i16
+                } else {
+                    0
+                })
+                .unwrap();
         }
         writer.finalize().unwrap();
 
         let mut samples = Vec::new();
         stream(&path, &mut |chunk| samples.extend_from_slice(chunk)).unwrap();
-        let onset = samples.iter().position(|s| s.abs() > 0.2).expect("no burst found");
+        let onset = samples
+            .iter()
+            .position(|s| s.abs() > 0.2)
+            .expect("no burst found");
         assert!(
             (onset as i64 - 8_000).abs() < 100,
             "burst starts at {onset}, expected about 8000"
@@ -296,7 +333,9 @@ mod tests {
         let mut writer = hound::WavWriter::create(&path, spec).unwrap();
         for frame in 0..SAMPLE_RATE / 2 {
             let value = ((frame as f64 / SAMPLE_RATE as f64) * 220.0 * std::f64::consts::TAU).sin();
-            writer.write_sample((value * i16::MAX as f64) as i16).unwrap();
+            writer
+                .write_sample((value * i16::MAX as f64) as i16)
+                .unwrap();
             writer.write_sample(0i16).unwrap();
         }
         writer.finalize().unwrap();
@@ -304,14 +343,22 @@ mod tests {
         let mut samples = Vec::new();
         stream(&path, &mut |chunk| samples.extend_from_slice(chunk)).unwrap();
         let expected = ((100.0 / SAMPLE_RATE as f64) * 220.0 * std::f64::consts::TAU).sin() / 2.0;
-        assert!((samples[100] as f64 - expected).abs() < 0.01, "got {}", samples[100]);
+        assert!(
+            (samples[100] as f64 - expected).abs() < 0.01,
+            "got {}",
+            samples[100]
+        );
     }
 
     #[test]
     fn no_single_piece_larger_than_a_chunk_reaches_the_sink() {
         let mut sizes = Vec::new();
         let mut sink = |piece: &[f32]| sizes.push(piece.len());
-        Sink { inner: &mut sink, skip: 0 }.push(&vec![0.0; CHUNK * 2 + 7]);
+        Sink {
+            inner: &mut sink,
+            skip: 0,
+        }
+        .push(&vec![0.0; CHUNK * 2 + 7]);
         assert_eq!(sizes, [CHUNK, CHUNK, 7]);
     }
 
@@ -319,7 +366,11 @@ mod tests {
     fn the_leading_delay_is_dropped_before_anything_reaches_the_sink() {
         let mut got: Vec<f32> = Vec::new();
         let mut sink = |piece: &[f32]| got.extend_from_slice(piece);
-        Sink { inner: &mut sink, skip: 3 }.push(&[1.0, 2.0, 3.0, 4.0, 5.0]);
+        Sink {
+            inner: &mut sink,
+            skip: 3,
+        }
+        .push(&[1.0, 2.0, 3.0, 4.0, 5.0]);
         assert_eq!(got, [4.0, 5.0]);
     }
 }

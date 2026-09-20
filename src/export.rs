@@ -31,13 +31,22 @@ impl Format {
 fn vtt_time(seconds: f64) -> String {
     let millis = (seconds * 1000.0).round().max(0.0) as u64;
     let (hours, minutes) = (millis / 3_600_000, millis / 60_000 % 60);
-    format!("{hours:02}:{minutes:02}:{:02}.{:03}", millis / 1000 % 60, millis % 1000)
+    format!(
+        "{hours:02}:{minutes:02}:{:02}.{:03}",
+        millis / 1000 % 60,
+        millis % 1000
+    )
 }
 
 /// Seconds as LRC's MM:SS.xx, which has no hours field so minutes keep counting past sixty.
 fn lrc_time(seconds: f64) -> String {
     let centis = (seconds * 100.0).round().max(0.0) as u64;
-    format!("{:02}:{:02}.{:02}", centis / 6000, centis / 100 % 60, centis % 100)
+    format!(
+        "{:02}:{:02}.{:02}",
+        centis / 6000,
+        centis / 100 % 60,
+        centis % 100
+    )
 }
 
 /// Preserves lyric spacing and unique word timestamps, including onsets after a cue's preview.
@@ -64,6 +73,7 @@ fn karaoke(line: &Line, stamp: impl Fn(f64) -> String, tag_first: bool) -> Strin
         }
         out.push_str(&word.text);
     }
+    out.push_str(remaining);
     out
 }
 
@@ -92,7 +102,13 @@ pub fn render(document: &Document, format: Format) -> Result<String> {
         Format::Lrc => document
             .lines
             .iter()
-            .map(|line| format!("[{}]{}\n", lrc_time(line.start), karaoke(line, lrc_time, true)))
+            .map(|line| {
+                format!(
+                    "[{}]{}\n",
+                    lrc_time(line.start),
+                    karaoke(line, lrc_time, true)
+                )
+            })
             .collect(),
     })
 }
@@ -115,7 +131,12 @@ mod tests {
             generator: "lockstep 0.0.0".to_string(),
             script: "fixture.txt".to_string(),
             duration: 30.0,
-            alignment: Alignment { matched: 4, words: 4, rate: 1.0 },
+            alignment: Alignment {
+                method: None,
+                matched: 4,
+                words: 4,
+                rate: 1.0,
+            },
             lines: vec![
                 Line {
                     start: 9.7,
@@ -161,7 +182,10 @@ mod tests {
         let mut document = document();
         document.lines[0].start = 9.4;
         let vtt = render(&document, Format::Vtt).unwrap();
-        assert!(vtt.contains("00:00:09.400 --> 00:00:11.200\n<00:00:09.700>one"), "{vtt}");
+        assert!(
+            vtt.contains("00:00:09.400 --> 00:00:11.200\n<00:00:09.700>one"),
+            "{vtt}"
+        );
     }
 
     /// Preserves a compound's hyphen without inserting spaces around inline word timestamps.
@@ -170,8 +194,23 @@ mod tests {
         let mut document = document();
         document.lines[0].text = "one-two".into();
         document.lines[0].words[0].text = "one-".into();
-        assert!(render(&document, Format::Vtt).unwrap().contains("one-<00:00:10.200>two"));
-        assert!(render(&document, Format::Lrc).unwrap().contains("one-<00:10.20>two"));
+        assert!(render(&document, Format::Vtt)
+            .unwrap()
+            .contains("one-<00:00:10.200>two"));
+        assert!(render(&document, Format::Lrc)
+            .unwrap()
+            .contains("one-<00:10.20>two"));
+    }
+
+    /// Preserves trailing punctuation that has no fabricated word timestamp.
+    #[test]
+    fn timed_exports_keep_untimed_trailing_punctuation() {
+        let mut document = document();
+        document.lines.truncate(1);
+        document.lines[0].text = "one —".into();
+        document.lines[0].words.truncate(1);
+        assert!(render(&document, Format::Vtt).unwrap().contains("one —"));
+        assert!(render(&document, Format::Lrc).unwrap().contains("one —"));
     }
 
     #[test]
@@ -191,10 +230,30 @@ mod tests {
         document.lines.truncate(1);
         document.lines[0].text = "well one two three".to_string();
         document.lines[0].words = vec![
-            Word { start: 9.7, end: 10.2, text: "well".to_string(), source: None },
-            Word { start: 9.7, end: 10.2, text: "one".to_string(), source: None },
-            Word { start: 10.2, end: 11.2, text: "two".to_string(), source: None },
-            Word { start: 10.2, end: 11.2, text: "three".to_string(), source: None },
+            Word {
+                start: 9.7,
+                end: 10.2,
+                text: "well".to_string(),
+                source: None,
+            },
+            Word {
+                start: 9.7,
+                end: 10.2,
+                text: "one".to_string(),
+                source: None,
+            },
+            Word {
+                start: 10.2,
+                end: 11.2,
+                text: "two".to_string(),
+                source: None,
+            },
+            Word {
+                start: 10.2,
+                end: 11.2,
+                text: "three".to_string(),
+                source: None,
+            },
         ];
         document
     }
@@ -204,7 +263,10 @@ mod tests {
         // WebVTT requires a cue's inline timestamps to strictly increase, so two words timed
         // together have to share a tag rather than repeat one.
         let vtt = render(&shared_time_document(), Format::Vtt).unwrap();
-        assert!(vtt.contains("\nwell one <00:00:10.200>two three\n"), "{vtt}");
+        assert!(
+            vtt.contains("\nwell one <00:00:10.200>two three\n"),
+            "{vtt}"
+        );
         let tags: Vec<&str> = vtt.matches("<00:00:09.700>").collect();
         assert!(tags.is_empty(), "the first word needs no tag: {vtt}");
     }
