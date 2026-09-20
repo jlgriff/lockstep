@@ -46,12 +46,11 @@ pub struct BackgroundImage {
     pub range: Option<TimeRange>,
 }
 
-/// Image placement after default ranges and ordering are resolved.
+/// Image placement with a required range after defaults and ordering are resolved.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BackgroundCue {
     pub path: PathBuf,
-    pub start: f64,
-    pub end: f64,
+    pub range: TimeRange,
 }
 
 /// Visual and encoding choices for a lyric video.
@@ -116,13 +115,9 @@ pub fn parse_background_image(_value: &str) -> Result<BackgroundImage> {
     bail!("background image parsing is not implemented")
 }
 
-/// Builds the solid-color source and ASS karaoke script for a render.
+/// Validates the inputs and builds background cues and an ASS karaoke script without file I/O.
 pub fn plan(_document: &Document, _style: &Style) -> Result<RenderPlan> {
-    Ok(RenderPlan {
-        video_source: String::new(),
-        background_images: Vec::new(),
-        subtitles: String::new(),
-    })
+    bail!("lyric video planning is not implemented")
 }
 
 /// Encodes one lyric video from its timing document and audio recording.

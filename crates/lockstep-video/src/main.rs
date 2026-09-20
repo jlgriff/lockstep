@@ -17,37 +17,37 @@ struct Args {
     #[arg(short, long, value_name = "VIDEO")]
     output: PathBuf,
 
-    #[arg(long, default_value_t = 1920)]
+    #[arg(long, default_value_t = Style::default().width)]
     width: u32,
 
-    #[arg(long, default_value_t = 1080)]
+    #[arg(long, default_value_t = Style::default().height)]
     height: u32,
 
-    #[arg(long, default_value_t = 30)]
+    #[arg(long, default_value_t = Style::default().frames_per_second)]
     frames_per_second: u32,
 
-    #[arg(long, default_value = "#000000")]
+    #[arg(long, default_value_t = Style::default().background_color)]
     background_color: String,
 
-    #[arg(long, default_value = "#FFFFFF")]
+    #[arg(long, default_value_t = Style::default().text_color)]
     text_color: String,
 
-    #[arg(long, default_value = "#FFD700")]
+    #[arg(long, default_value_t = Style::default().highlight_color)]
     highlight_color: String,
 
-    #[arg(long, default_value = "sans-serif")]
+    #[arg(long, default_value_t = Style::default().font)]
     font: String,
 
-    #[arg(long, default_value_t = 72)]
+    #[arg(long, default_value_t = Style::default().font_size)]
     font_size: u32,
 
-    #[arg(long, default_value_t = 2)]
+    #[arg(long, default_value_t = Style::default().line_count)]
     lines: usize,
 
-    #[arg(long, default_value = "♪ ♪ ♪")]
+    #[arg(long, default_value_t = Style::default().rest_text)]
     rest_text: String,
 
-    /// Background image, optionally prefixed by a WebVTT range; repeat for multiple images
+    /// One image defaults to the whole track; repeated images each require a non-overlapping range
     #[arg(long, value_name = "[HH:MM:SS.mmm..HH:MM:SS.mmm=]IMAGE")]
     background_image: Vec<String>,
 }

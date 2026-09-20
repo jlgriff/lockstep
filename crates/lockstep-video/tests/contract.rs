@@ -1,50 +1,52 @@
-use lockstep_video::{parse_document, plan, Document, Style, Word};
+use lockstep_video::{parse_document, plan, Document, Line, Style, Word};
+use std::collections::BTreeMap;
 
-const TIMINGS: &str = r##"
-{
-  "version": 1,
-  "generator": "lockstep 0.1.0",
-  "script": "lyrics.txt",
-  "duration": 10.0,
-  "alignment": { "matched": 5, "words": 5, "rate": 1.0 },
-  "lines": [
-    {
-      "start": 1.0,
-      "end": 3.0,
-      "text": "One two",
-      "words": [
-        { "start": 1.0, "end": 2.0, "text": "One" },
-        { "start": 2.0, "end": 3.0, "text": "two" }
-      ]
-    },
-    {
-      "start": 5.0,
-      "end": 7.0,
-      "text": "Three four",
-      "words": [
-        { "start": 5.0, "end": 6.0, "text": "Three" },
-        { "start": 6.0, "end": 7.0, "text": "four" }
-      ]
-    },
-    {
-      "start": 8.0,
-      "end": 9.0,
-      "text": "Five",
-      "words": [
-        { "start": 8.0, "end": 9.0, "text": "Five" }
-      ]
-    }
-  ]
-}
-"##;
-
-/// Parses the representative Lockstep document shared by rendering tests.
+/// Supplies unequal centisecond spans so fixed durations and extra timing offsets cannot pass.
 fn document() -> Document {
-    parse_document(TIMINGS).unwrap()
+    Document {
+        version: 1,
+        duration: 10.37,
+        lines: vec![
+            line(
+                1.23,
+                3.01,
+                vec![word(1.23, 1.60, "One,"), word(1.60, 3.01, "two")],
+            ),
+            line(
+                5.07,
+                7.30,
+                vec![word(5.07, 5.57, "Three"), word(5.57, 7.30, "four")],
+            ),
+            line(8.0, 9.12, vec![word(8.0, 9.12, "Five")]),
+        ],
+    }
 }
 
-/// Returns conspicuous custom values so defaults cannot satisfy customization tests.
-fn custom_style() -> Style {
+/// Builds a printable lyric row from timed words without exercising JSON parsing.
+fn line(start: f64, end: f64, words: Vec<Word>) -> Line {
+    Line {
+        start,
+        end,
+        text: words
+            .iter()
+            .map(|word| word.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" "),
+        words,
+    }
+}
+
+/// Supplies one timed token for the rendering fixtures.
+fn word(start: f64, end: f64, text: &str) -> Word {
+    Word {
+        start,
+        end,
+        text: text.to_string(),
+    }
+}
+
+/// Uses non-default styling and isolates the current line unless a test requests previews.
+fn style() -> Style {
     Style {
         width: 1280,
         height: 720,
@@ -54,18 +56,57 @@ fn custom_style() -> Style {
         highlight_color: "#FFCC00".to_string(),
         font: "Avenir Next".to_string(),
         font_size: 64,
-        line_count: 2,
+        line_count: 1,
         rest_text: "♪ ♫".to_string(),
-        background_images: Vec::new(),
+        ..Style::default()
     }
 }
 
-#[test]
-/// Refuses future Lockstep shapes rather than silently misreading them.
-fn rejects_an_unsupported_lockstep_format_version() {
-    let future = TIMINGS.replacen(r#""version": 1"#, r#""version": 2"#, 1);
-    let error = parse_document(&future).unwrap_err();
+/// Reads ASS records by their declared fields, retaining commas inside the final text field.
+fn records<'a>(script: &'a str, section: &str, prefix: &str) -> Vec<BTreeMap<&'a str, &'a str>> {
+    let lines: Vec<_> = script
+        .lines()
+        .skip_while(|line| line.trim() != section)
+        .skip(1)
+        .take_while(|line| !line.starts_with('['))
+        .collect();
+    let format = lines
+        .iter()
+        .find_map(|line| line.strip_prefix("Format:"))
+        .unwrap_or_else(|| panic!("missing {section} Format declaration in {script:?}"));
+    let fields: Vec<_> = format.split(',').map(str::trim).collect();
+    lines
+        .iter()
+        .filter_map(|line| line.strip_prefix(prefix))
+        .map(|row| {
+            let values: Vec<_> = row.trim_start().splitn(fields.len(), ',').collect();
+            assert_eq!(values.len(), fields.len(), "malformed ASS record: {row:?}");
+            fields.iter().copied().zip(values).collect()
+        })
+        .collect()
+}
 
+/// Extracts every event so extra, missing, or mistimed dialogue cannot hide behind substring checks.
+fn events(script: &str) -> Vec<(&str, &str, &str, &str)> {
+    records(script, "[Events]", "Dialogue:")
+        .iter()
+        .map(|row| (row["Start"], row["End"], row["Style"], row["Text"]))
+        .collect()
+}
+
+/// Selects complete lyric bodies while retaining their order and count.
+fn lyrics(script: &str) -> Vec<&str> {
+    events(script)
+        .into_iter()
+        .filter(|event| event.2 == "Lyrics")
+        .map(|event| event.3)
+        .collect()
+}
+
+/// Refuses future JSON versions before interpreting their timing schema.
+#[test]
+fn rejects_an_unsupported_lockstep_format_version() {
+    let error = parse_document(r#"{"version":2,"cues":[]}"#).unwrap_err();
     assert!(
         error
             .to_string()
@@ -74,108 +115,341 @@ fn rejects_an_unsupported_lockstep_format_version() {
     );
 }
 
+/// Keeps a later word at its recorded onset when words within a line have a timing gap.
 #[test]
-/// Uses configured dimensions, frame rate, and background for the generated video source.
+fn gaps_between_words_do_not_pull_later_highlights_forward() {
+    let document = Document {
+        version: 1,
+        duration: 2.0,
+        lines: vec![line(
+            0.0,
+            2.0,
+            vec![word(0.0, 0.30, "One"), word(1.23, 2.0, "Two")],
+        )],
+    };
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [(
+            "0:00:00.00",
+            "0:00:02.00",
+            "Lyrics",
+            r"{\k123}One {\k77}Two"
+        )]
+    );
+}
+
+/// Applies version checks to direct Rust callers as well as JSON callers.
+#[test]
+fn planning_rejects_an_unsupported_document_version() {
+    let document = Document {
+        version: 2,
+        ..document()
+    };
+    let error = plan(&document, &style()).unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported Lockstep format version 2"),
+        "{error:#}"
+    );
+}
+
+/// Keeps canvas and subtitle resolution aligned and retains the fractional track duration.
+#[test]
 fn uses_the_configured_canvas() {
-    let plan = plan(&document(), &custom_style()).unwrap();
-
-    assert_eq!(plan.video_source, "color=c=#112233:s=1280x720:r=24:d=10");
-}
-
-#[test]
-/// Maps font and text colors into the ASS lyric style.
-fn uses_the_configured_typography() {
-    let plan = plan(&document(), &custom_style()).unwrap();
-
-    assert!(
-        plan.subtitles
-            .contains("Style: Lyrics,Avenir Next,64,&H0000CCFF,&H00FFEEDD,"),
-        "{}",
-        plan.subtitles
-    );
-}
-
-#[test]
-/// Gives each word an ASS karaoke span matching its Lockstep timing.
-fn highlights_words_at_their_spoken_times() {
-    let plan = plan(&document(), &custom_style()).unwrap();
-
-    assert!(
-        plan.subtitles.contains(r"{\k100}One {\k100}two"),
-        "{}",
-        plan.subtitles
-    );
-}
-
-#[test]
-/// Gives words sharing one Lockstep span one simultaneous highlight step.
-fn highlights_words_with_the_same_span_as_one_unit() {
-    let mut document = document();
-    document.lines[0].text = "One ! two".to_string();
-    document.lines[0].words = vec![
-        Word {
-            start: 1.0,
-            end: 2.0,
-            text: "One".to_string(),
-        },
-        Word {
-            start: 1.0,
-            end: 2.0,
-            text: "!".to_string(),
-        },
-        Word {
-            start: 2.0,
-            end: 3.0,
-            text: "two".to_string(),
-        },
-    ];
-    let plan = plan(&document, &custom_style()).unwrap();
-
-    assert!(
-        plan.subtitles.contains(r"{\k100}One ! {\k100}two"),
-        "{}",
-        plan.subtitles
-    );
-}
-
-/// Finds ASS dialogue active over one exact time span.
-fn dialogue_during(subtitles: &str, start: &str, end: &str) -> String {
-    let span = format!(",{start},{end},");
-    subtitles
-        .lines()
-        .filter(|line| line.starts_with("Dialogue:") && line.contains(&span))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-#[test]
-/// Shows the current line followed by only enough upcoming lines to reach the configured limit.
-fn limits_each_lyric_window_to_the_configured_line_count() {
-    let plan = plan(&document(), &custom_style()).unwrap();
-    let first_window = dialogue_during(&plan.subtitles, "0:00:01.00", "0:00:03.00");
-
-    assert!(
-        first_window.contains("One") && first_window.contains("Three four"),
-        "{first_window}"
-    );
-    assert!(!first_window.contains("Five"), "{first_window}");
-}
-
-#[test]
-/// Replaces every gap outside sung line spans with the configured musical notes.
-fn shows_musical_notes_whenever_no_lyrics_are_sung() {
-    let plan = plan(&document(), &custom_style()).unwrap();
-
-    for expected in [
-        "Dialogue: 0,0:00:00.00,0:00:01.00,Rest,,0,0,0,,♪ ♫",
-        "Dialogue: 0,0:00:03.00,0:00:05.00,Rest,,0,0,0,,♪ ♫",
-        "Dialogue: 0,0:00:07.00,0:00:08.00,Rest,,0,0,0,,♪ ♫",
-        "Dialogue: 0,0:00:09.00,0:00:10.00,Rest,,0,0,0,,♪ ♫",
-    ] {
+    let plan = plan(&document(), &style()).unwrap();
+    assert_eq!(plan.video_source, "color=c=#112233:s=1280x720:r=24:d=10.37");
+    for expected in ["ScriptType: v4.00+", "PlayResX: 1280", "PlayResY: 720"] {
         assert!(
-            plan.subtitles.contains(expected),
-            "missing {expected:?} in {}",
-            plan.subtitles
+            plan.subtitles.lines().any(|line| line == expected),
+            "missing {expected:?}"
         );
     }
+    assert!(
+        plan.background_images.is_empty(),
+        "no images were requested"
+    );
 }
+
+/// Keeps previews and notes in the text color while sung words use the highlight color.
+#[test]
+fn uses_the_configured_typography_without_highlighting_plain_text() {
+    let plan = plan(&document(), &style()).unwrap();
+    let styles = records(&plan.subtitles, "[V4+ Styles]", "Style:");
+    for (name, primary) in [("Lyrics", "&H0000CCFF"), ("Plain", "&H00FFEEDD")] {
+        let row = styles
+            .iter()
+            .find(|row| row["Name"] == name)
+            .unwrap_or_else(|| panic!("missing {name} style: {styles:?}"));
+        assert_eq!(row["Fontname"], "Avenir Next");
+        assert_eq!(row["Fontsize"], "64");
+        assert_eq!(row["PrimaryColour"], primary);
+        assert_eq!(row["SecondaryColour"], "&H00FFEEDD");
+    }
+}
+
+/// Covers the entire track exactly once with correctly timed lyrics or musical notes.
+#[test]
+fn schedules_words_and_rests_without_extra_or_missing_events() {
+    let plan = plan(&document(), &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [
+            ("0:00:00.00", "0:00:01.23", "Plain", "♪ ♫"),
+            (
+                "0:00:01.23",
+                "0:00:03.01",
+                "Lyrics",
+                r"{\k37}One, {\k141}two"
+            ),
+            ("0:00:03.01", "0:00:05.07", "Plain", "♪ ♫"),
+            (
+                "0:00:05.07",
+                "0:00:07.30",
+                "Lyrics",
+                r"{\k50}Three {\k173}four"
+            ),
+            ("0:00:07.30", "0:00:08.00", "Plain", "♪ ♫"),
+            ("0:00:08.00", "0:00:09.12", "Lyrics", r"{\k112}Five"),
+            ("0:00:09.12", "0:00:10.37", "Plain", "♪ ♫"),
+        ]
+    );
+}
+
+/// Advances to the next time group once even when multiple consecutive groups contain carried words.
+#[test]
+fn highlights_shared_spans_together_without_double_counting_time() {
+    let mut document = document();
+    document.lines[0] = line(
+        1.23,
+        3.01,
+        vec![
+            word(1.23, 1.60, "One,"),
+            word(1.23, 1.60, "—"),
+            word(1.60, 3.01, "two"),
+            word(1.60, 3.01, "!"),
+        ],
+    );
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        lyrics(&plan.subtitles),
+        [
+            r"{\k37}One, — {\k141}two !",
+            r"{\k50}Three {\k173}four",
+            r"{\k112}Five",
+        ]
+    );
+}
+
+/// Advances the complete preview window without inheriting karaoke color or retaining finished lines.
+#[test]
+fn three_line_windows_advance_and_shrink_at_the_end() {
+    let style = Style {
+        line_count: 3,
+        ..style()
+    };
+    let plan = plan(&document(), &style).unwrap();
+    assert_eq!(
+        lyrics(&plan.subtitles),
+        [
+            r"{\k37}One, {\k141}two{\rPlain}\NThree four\NFive",
+            r"{\k50}Three {\k173}four{\rPlain}\NFive",
+            r"{\k112}Five",
+        ]
+    );
+}
+
+/// Replaces lyrics directly at touching line boundaries without inserting a zero-length rest.
+#[test]
+fn adjacent_lines_have_no_rest_between_them() {
+    let mut document = document();
+    document.lines = vec![
+        line(0.0, 0.37, vec![word(0.0, 0.37, "One")]),
+        line(0.37, 10.37, vec![word(0.37, 10.37, "Two")]),
+    ];
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [
+            ("0:00:00.00", "0:00:00.37", "Lyrics", r"{\k37}One"),
+            ("0:00:00.37", "0:00:10.37", "Lyrics", r"{\k1000}Two"),
+        ]
+    );
+}
+
+/// Shows default musical notes throughout an instrumental-only track.
+#[test]
+fn an_empty_lyric_track_is_one_full_length_rest() {
+    let document = Document {
+        lines: Vec::new(),
+        ..document()
+    };
+    let plan = plan(&document, &Style::default()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [("0:00:00.00", "0:00:10.37", "Plain", "♪ ♪ ♪")]
+    );
+}
+
+/// Replaces an older line when a newer one starts, even when alignment spans overlap.
+#[test]
+fn overlapping_source_lines_do_not_stack_display_windows() {
+    let mut document = document();
+    document.lines = vec![
+        line(0.0, 2.0, vec![word(0.0, 2.0, "First")]),
+        line(1.5, 10.37, vec![word(1.5, 10.37, "Second")]),
+    ];
+    let plan = plan(&document, &style()).unwrap();
+    let events = events(&plan.subtitles);
+    assert_eq!(
+        events
+            .iter()
+            .map(|event| (event.0, event.1, event.2))
+            .collect::<Vec<_>>(),
+        [
+            ("0:00:00.00", "0:00:01.50", "Lyrics"),
+            ("0:00:01.50", "0:00:10.37", "Lyrics"),
+        ]
+    );
+    assert!(events[0].3.ends_with("First"), "{events:?}");
+    assert!(events[1].3.ends_with("Second"), "{events:?}");
+}
+
+/// Ignores empty spans produced by alignment rather than emitting invalid ASS events.
+#[test]
+fn zero_length_source_lines_do_not_interrupt_rests() {
+    let document = Document {
+        lines: vec![line(1.0, 1.0, vec![word(1.0, 1.0, "Collapsed")])],
+        ..document()
+    };
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [("0:00:00.00", "0:00:10.37", "Plain", "♪ ♫")]
+    );
+}
+
+/// Accepts Lockstep metadata and timing provenance without requiring its implementation crate.
+#[test]
+fn consumes_lockstep_json_with_carried_and_spread_words() {
+    let document = parse_document(
+        r#"{
+        "version": 1, "duration": 1.5, "generator": "lockstep", "script": "song.txt",
+        "alignment": {"matched": 1, "words": 3, "rate": 0.33},
+        "lines": [{"start": 0, "end": 1.5, "text": "Oui, — 夜",
+            "words": [
+                {"start": 0, "end": 0.5, "text": "Oui,"},
+                {"start": 0, "end": 0.5, "text": "—", "timing": "carried"},
+                {"start": 0.5, "end": 1.5, "text": "夜", "timing": "spread"}
+            ]}]
+    }"#,
+    )
+    .unwrap();
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [(
+            "0:00:00.00",
+            "0:00:01.50",
+            "Lyrics",
+            r"{\k50}Oui, — {\k100}夜"
+        ),]
+    );
+}
+
+/// Displays line-only Lockstep entries without inventing per-word highlights or treating them as silence.
+#[test]
+fn missing_word_timings_leave_the_line_in_plain_text() {
+    let document = parse_document(
+        r#"{
+        "version": 1, "duration": 1.5,
+        "lines": [{"start": 0, "end": 1.5, "text": "Sing this line"}]
+    }"#,
+    )
+    .unwrap();
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [("0:00:00.00", "0:00:01.50", "Plain", "Sing this line")]
+    );
+}
+
+/// Protects literal lyric braces from ASS interpretation in both current and upcoming lines.
+#[test]
+fn escapes_literal_lyric_braces_in_current_and_preview_text() {
+    let mut document = document();
+    document.lines[0] = line(1.23, 3.01, vec![word(1.23, 3.01, "{Oui},")]);
+    document.lines[1] = line(5.07, 7.30, vec![word(5.07, 7.30, "{夜}")]);
+    let style = Style {
+        line_count: 2,
+        ..style()
+    };
+    let plan = plan(&document, &style).unwrap();
+    assert_eq!(
+        lyrics(&plan.subtitles),
+        [
+            r"{\k178}\{Oui\},{\rPlain}\N\{夜\}",
+            r"{\k223}\{夜\}{\rPlain}\NFive",
+            r"{\k112}Five",
+        ]
+    );
+}
+
+macro_rules! invalid_style {
+    ($name:ident, $field:ident, $value:expr) => {
+        #[doc = concat!("Rejects invalid ", stringify!($field), " before handing values to ASS or FFmpeg.")]
+        #[test]
+        fn $name() {
+            let style = Style { $field: $value, ..style() };
+            let error = plan(&document(), &style).unwrap_err();
+            assert!(error.to_string().contains(stringify!($field)), "{error:#}");
+        }
+    };
+}
+
+invalid_style!(rejects_zero_line_count, line_count, 0);
+invalid_style!(rejects_zero_frame_rate, frames_per_second, 0);
+invalid_style!(rejects_zero_width, width, 0);
+invalid_style!(rejects_zero_height, height, 0);
+invalid_style!(rejects_zero_font_size, font_size, 0);
+invalid_style!(
+    rejects_invalid_background_color,
+    background_color,
+    "#12GG00".to_string()
+);
+invalid_style!(
+    rejects_invalid_text_color,
+    text_color,
+    "#XYZXYZ".to_string()
+);
+invalid_style!(
+    rejects_invalid_highlight_color,
+    highlight_color,
+    "red,blue".to_string()
+);
+invalid_style!(
+    rejects_font_names_that_break_ass_fields,
+    font,
+    "Avenir,Next".to_string()
+);
+
+macro_rules! invalid_duration {
+    ($name:ident, $duration:expr) => {
+        #[doc = concat!("Rejects ", stringify!($name), " before generating track-length sources.")]
+        #[test]
+        fn $name() {
+            let document = Document {
+                duration: $duration,
+                ..document()
+            };
+            let error = plan(&document, &style()).unwrap_err();
+            assert!(error.to_string().contains("duration"), "{error:#}");
+        }
+    };
+}
+
+invalid_duration!(rejects_zero_track_duration, 0.0);
+invalid_duration!(rejects_negative_track_duration, -1.0);
+invalid_duration!(rejects_nan_track_duration, f64::NAN);
+invalid_duration!(rejects_infinite_track_duration, f64::INFINITY);
