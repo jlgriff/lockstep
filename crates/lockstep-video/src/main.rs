@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use lockstep_video::{render, RenderRequest, Style};
+use lockstep_video::{parse_background_image, render, RenderRequest, Style};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -46,11 +46,20 @@ struct Args {
 
     #[arg(long, default_value = "♪ ♪ ♪")]
     rest_text: String,
+
+    /// Background image, optionally prefixed by a WebVTT range; repeat for multiple images
+    #[arg(long, value_name = "[HH:MM:SS.mmm..HH:MM:SS.mmm=]IMAGE")]
+    background_image: Vec<String>,
 }
 
 /// Passes command-line input directly into the rendering library.
 fn main() -> Result<()> {
     let args = Args::parse();
+    let background_images = args
+        .background_image
+        .iter()
+        .map(|value| parse_background_image(value))
+        .collect::<Result<Vec<_>>>()?;
     render(&RenderRequest {
         timings: args.timings,
         audio: args.audio,
@@ -66,6 +75,7 @@ fn main() -> Result<()> {
             font_size: args.font_size,
             line_count: args.lines,
             rest_text: args.rest_text,
+            background_images,
         },
     })
 }

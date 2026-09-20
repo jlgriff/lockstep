@@ -56,6 +56,7 @@ fn custom_style() -> Style {
         font_size: 64,
         line_count: 2,
         rest_text: "♪ ♫".to_string(),
+        background_images: Vec::new(),
     }
 }
 

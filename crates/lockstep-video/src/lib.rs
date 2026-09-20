@@ -32,6 +32,28 @@ pub struct Word {
     pub text: String,
 }
 
+/// Half-open media span measured in seconds from track start.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimeRange {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// Source image and its optional explicit time range.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundImage {
+    pub path: PathBuf,
+    pub range: Option<TimeRange>,
+}
+
+/// Image placement after default ranges and ordering are resolved.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BackgroundCue {
+    pub path: PathBuf,
+    pub start: f64,
+    pub end: f64,
+}
+
 /// Visual and encoding choices for a lyric video.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
@@ -45,6 +67,7 @@ pub struct Style {
     pub font_size: u32,
     pub line_count: usize,
     pub rest_text: String,
+    pub background_images: Vec<BackgroundImage>,
 }
 
 impl Default for Style {
@@ -61,6 +84,7 @@ impl Default for Style {
             font_size: 72,
             line_count: 2,
             rest_text: "♪ ♪ ♪".to_string(),
+            background_images: Vec::new(),
         }
     }
 }
@@ -78,6 +102,7 @@ pub struct RenderRequest {
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {
     pub video_source: String,
+    pub background_images: Vec<BackgroundCue>,
     pub subtitles: String,
 }
 
@@ -86,10 +111,16 @@ pub fn parse_document(json: &str) -> Result<Document> {
     serde_json::from_str(json).context("reading Lockstep timing JSON")
 }
 
+/// Parses a bare path or a WebVTT-timestamped image range from one CLI value.
+pub fn parse_background_image(_value: &str) -> Result<BackgroundImage> {
+    bail!("background image parsing is not implemented")
+}
+
 /// Builds the solid-color source and ASS karaoke script for a render.
 pub fn plan(_document: &Document, _style: &Style) -> Result<RenderPlan> {
     Ok(RenderPlan {
         video_source: String::new(),
+        background_images: Vec::new(),
         subtitles: String::new(),
     })
 }
