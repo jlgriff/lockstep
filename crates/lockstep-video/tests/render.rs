@@ -142,6 +142,58 @@ fn a_visible_line_never_moves_when_it_becomes_current() {
     );
 }
 
+/// Retains both members of a page and introduces the next pair only after its last sung word.
+#[test]
+#[ignore = "requires FFmpeg with libass and Arial"]
+fn couplet_text_stays_unchanged_until_the_page_ends() {
+    let fixture = Fixture::with_lyrics(
+        "couplet-pages",
+        r#"{"version":1,"duration":3,"lines":[
+        {"start":0,"end":0.7,"text":"MMMM","words":[{"start":0,"end":0.7,"text":"MMMM"}]},
+        {"start":0.7,"end":1.5,"text":"MMMM","words":[{"start":0.7,"end":1.5,"text":"MMMM"}]},
+        {"start":1.5,"end":2.2,"text":"I","words":[{"start":1.5,"end":2.2,"text":"I"}]},
+        {"start":2.2,"end":3,"text":"I","words":[{"start":2.2,"end":3,"text":"I"}]}
+    ]}"#,
+        Style {
+            highlight_color: "#FFFFFF".into(),
+            ..Style::default()
+        },
+    );
+    for time in ["0.3", "1.0", "1.4"] {
+        let frame = fixture.frame(time);
+        for bottom in [false, true] {
+            let width = row_width(&frame, bottom);
+            assert!(
+                width > 80,
+                "page changed before its last word ended at {time}s: row width {width}"
+            );
+        }
+    }
+    for time in ["1.5", "2.5"] {
+        let frame = fixture.frame(time);
+        for bottom in [false, true] {
+            let width = row_width(&frame, bottom);
+            assert!(
+                width < 20,
+                "old page still visible at {time}s: row width {width}"
+            );
+        }
+    }
+}
+
+/// Measures visible text width within a fixed row, ignoring background and compression edges.
+fn row_width(frame: &[u8], bottom: bool) -> usize {
+    let columns: Vec<_> = frame
+        .chunks_exact(3)
+        .enumerate()
+        .filter(|(index, pixel)| {
+            (index / 640 >= 180) == bottom && pixel.iter().all(|value| *value > 200)
+        })
+        .map(|(index, _)| index % 640)
+        .collect();
+    columns.iter().max().expect("lyric row must remain visible") - columns.iter().min().unwrap()
+}
+
 /// Starts a short color transition at word onset and finishes before the held note ends.
 #[test]
 #[ignore = "requires FFmpeg with libass and Arial"]
@@ -151,7 +203,7 @@ fn highlighting_transitions_at_onset_instead_of_snapping_or_waiting() {
     let during = transitioning_pixels(&fixture.frame("0.534"));
     let settled = transitioning_pixels(&fixture.frame("0.9"));
     assert!(
-        during > settled * 3 + 30,
+        during > settled + 100,
         "no onset transition: {during} intermediate pixels versus {settled} after settling"
     );
 }

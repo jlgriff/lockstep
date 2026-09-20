@@ -22,12 +22,13 @@ half-open: start included, end excluded. Adjacent ranges do not overlap.
 Track duration must be finite and positive. Use the supplied timestamps without
 adding a lead offset; Lockstep already accounts for its own display lead.
 
-`line_count` counts fixed lyric rows. Source line `i` occupies row `i % line_count`:
-it appears as a preview, highlights in place, and disappears at completion. A vacated row
-can show a future line; other rows never move or recenter. Each source line has one ASS
-event with an explicit `\pos`, including its preview period. A new lyric's start truncates
-an overlapping older sung span; zero-length spans are skipped. Gaps between sung spans
-show notes below the lyric rows, allowing existing previews to stay visible.
+`line_count` counts source lines per page. Consecutive groups of that size appear together
+in reading order at the first line's onset and stay until the last line's end. All rows
+share the page's display interval; completed lines remain visible in plain text. No line
+from the next page appears early. The final incomplete page uses the same fixed row positions.
+Each source line has one ASS event with an explicit `\pos`. A new lyric's start truncates
+an overlapping older sung span without removing its text mid-page; zero-length spans are
+skipped before grouping. Gaps between sung spans show notes below the page's fixed rows.
 
 Only the active word is highlighted. The default is soft cyan (`#67E8F9`) over navy, with
 white surrounding text. An 80ms ease-out at onset brings in the accent promptly; an 80ms

@@ -256,21 +256,22 @@ fn highlights_shared_spans_together_without_double_counting_time() {
     );
 }
 
-/// Keeps each line in a fixed row and reuses only the row whose previous lyric has finished.
+/// Keeps whole couplets visible until their final word ends, including a final incomplete page.
 #[test]
-fn visible_lines_keep_their_slots_until_they_finish() {
+fn lyric_pages_change_together_after_their_last_line_finishes() {
     let style = Style {
         line_count: 2,
         ..style()
     };
     let document = Document {
         version: 1,
-        duration: 4.0,
+        duration: 5.0,
         lines: vec![
             line(0.0, 1.0, vec![word(0.0, 1.0, "One")]),
             line(1.0, 2.0, vec![word(1.0, 2.0, "Two")]),
             line(2.0, 3.0, vec![word(2.0, 3.0, "Three")]),
             line(3.0, 4.0, vec![word(3.0, 4.0, "Four")]),
+            line(4.0, 5.0, vec![word(4.0, 5.0, "Five")]),
         ],
     };
     let plan = plan(&document, &style).unwrap();
@@ -280,10 +281,11 @@ fn visible_lines_keep_their_slots_until_they_finish() {
             .map(|row| (row["Start"], row["End"]))
             .collect::<Vec<_>>(),
         [
-            ("0:00:00.00", "0:00:01.00"),
             ("0:00:00.00", "0:00:02.00"),
-            ("0:00:01.00", "0:00:03.00"),
+            ("0:00:00.00", "0:00:02.00"),
             ("0:00:02.00", "0:00:04.00"),
+            ("0:00:02.00", "0:00:04.00"),
+            ("0:00:04.00", "0:00:05.00"),
         ]
     );
     for (index, row) in rows.iter().enumerate() {
@@ -522,7 +524,7 @@ fn escapes_literal_lyric_braces_in_current_and_preview_text() {
         [
             r"{\rPlain\1c&H0000CCFF&\t(1779,1780,\1c&H00FFEEDD&)}\{Oui\},",
             r"{\rPlain\t(3839,3840,\1c&H0000CCFF&)\t(6069,6070,\1c&H00FFEEDD&)}\{夜\}",
-            r"{\rPlain\t(2929,2930,\1c&H0000CCFF&)\t(4049,4050,\1c&H00FFEEDD&)}Five",
+            r"{\rPlain\1c&H0000CCFF&\t(1119,1120,\1c&H00FFEEDD&)}Five",
         ]
     );
 }

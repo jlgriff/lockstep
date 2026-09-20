@@ -102,8 +102,9 @@ target/release/lockstep-video recording.json recording.mp3 -o recording.mp4
 ```
 
 Defaults: dark blue (`#0B1730`) 1920x1080 canvas, white 72-pixel sans-serif text, soft cyan
-(`#67E8F9`) for the active word, two fixed lyric rows, and 30 FPS. Each line stays in its row
-from preview through completion; the next preview uses a vacated row. Words ease into cyan
+(`#67E8F9`) for the active word, two lines per page, and 30 FPS. Each page shows its lines
+together, in order, and keeps every line visible until the page's final sung word ends.
+Then the whole page changes; upcoming pages never replace individual rows. Words ease into cyan
 over 80ms from their recorded onset and back to white before their end or the next onset.
 Both fades shorten for quick words. Completed and upcoming words remain white; internal
 pauses have no highlighted word. Words sharing a timing span still highlight together because

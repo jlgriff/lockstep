@@ -406,7 +406,7 @@ fn ass_color(color: &str) -> String {
     format!("&H00{}{}{}", &color[5..7], &color[3..5], &color[1..3])
 }
 
-/// Gives every lyric one persistent row and shows notes in gaps between sung lines.
+/// Holds complete lyric pages through their final sung line and shows notes during rests.
 fn append_events(script: &mut String, document: &Document, style: &Style) {
     let lines = document
         .lines
@@ -426,24 +426,23 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
         })
         .collect::<Vec<_>>();
     let mut cursor = 0.0;
-    for (index, (line, end)) in windows.iter().enumerate() {
-        if line.start > cursor {
-            append_rest(script, cursor, line.start, style);
+    for page in windows.chunks(style.line_count) {
+        let display_start = page[0].0.start;
+        let display_end = page.last().unwrap().1;
+        for (slot, (line, end)) in page.iter().enumerate() {
+            if line.start > cursor {
+                append_rest(script, cursor, line.start, style);
+            }
+            let (event_style, body) = if line.words.is_empty() {
+                ("Plain", escape_text(&line.text))
+            } else {
+                ("Lyrics", active_word_text(line, display_start, *end, style))
+            };
+            let y = row_y(style, slot);
+            let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
+            append_dialogue(script, display_start, display_end, event_style, &text);
+            cursor = *end;
         }
-        let preview_index = index.saturating_sub(style.line_count - 1);
-        let mut display_start = windows[preview_index].0.start;
-        if index >= style.line_count {
-            display_start = display_start.max(windows[index - style.line_count].1);
-        }
-        let (event_style, body) = if line.words.is_empty() {
-            ("Plain", escape_text(&line.text))
-        } else {
-            ("Lyrics", active_word_text(line, display_start, *end, style))
-        };
-        let y = row_y(style, index % style.line_count);
-        let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
-        append_dialogue(script, display_start, *end, event_style, &text);
-        cursor = *end;
     }
     if cursor < document.duration {
         append_rest(script, cursor, document.duration, style);
