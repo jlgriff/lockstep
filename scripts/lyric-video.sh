@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ${1:-} == --help || $# -lt 2 ]]; then
+    printf 'Usage: %s AUDIO LYRICS [--reuse-timings] [VIDEO_OPTIONS...]\n' "$0"
+    printf 'Creates AUDIO.lockstep.json and AUDIO lyric video.mp4. Pass -o to choose the video path.\n'
+    printf 'Use --reuse-timings immediately after LYRICS to restyle without transcribing again.\n'
+    if [[ ${1:-} == --help ]]; then exit 0; else exit 1; fi
+fi
+
+repo=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)
+audio=$1
+lyrics=$2
+shift 2
+timings="${audio%.*}.lockstep.json"
+reuse=false
+if [[ ${1:-} == --reuse-timings ]]; then
+    reuse=true
+    shift
+fi
+
+cargo build --quiet --release --workspace --manifest-path "$repo/Cargo.toml"
+if [[ "$reuse" == true ]]; then
+    [[ -s "$timings" ]] || { printf 'No saved timings: %s\n' "$timings" >&2; exit 1; }
+else
+    "$repo/target/release/lockstep" "$audio" "$lyrics" --no-gpu -o "$timings"
+fi
+printf 'Rendering lyric video...\n'
+"$repo/target/release/lockstep-video" "$timings" "$audio" "$@"

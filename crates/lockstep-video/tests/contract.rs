@@ -57,6 +57,7 @@ fn style() -> Style {
         font: "Avenir Next".to_string(),
         font_size: 64,
         line_count: 1,
+        highlight_transition_ms: 0,
         rest_text: "♪ ♫".to_string(),
         ..Style::default()
     }
@@ -90,7 +91,15 @@ fn records<'a>(script: &'a str, section: &str, prefix: &str) -> Vec<BTreeMap<&'a
 fn events(script: &str) -> Vec<(&str, &str, &str, &str)> {
     records(script, "[Events]", "Dialogue:")
         .iter()
-        .map(|row| (row["Start"], row["End"], row["Style"], row["Text"]))
+        .map(|row| {
+            let text = row["Text"];
+            let text = if text.starts_with(r"{\an5\pos(") {
+                text.split_once('}').unwrap().1
+            } else {
+                text
+            };
+            (row["Start"], row["End"], row["Style"], text)
+        })
         .collect()
 }
 
@@ -134,7 +143,7 @@ fn gaps_between_words_do_not_pull_later_highlights_forward() {
             "0:00:00.00",
             "0:00:02.00",
             "Lyrics",
-            r"{\k123}One {\k77}Two"
+            r"{\rPlain\1c&H0000CCFF&\t(299,300,\1c&H00FFEEDD&)}One {\rPlain\t(1229,1230,\1c&H0000CCFF&)\t(1999,2000,\1c&H00FFEEDD&)}Two"
         )]
     );
 }
@@ -201,17 +210,22 @@ fn schedules_words_and_rests_without_extra_or_missing_events() {
                 "0:00:01.23",
                 "0:00:03.01",
                 "Lyrics",
-                r"{\k37}One, {\k141}two"
+                r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One, {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two"
             ),
             ("0:00:03.01", "0:00:05.07", "Plain", "♪ ♫"),
             (
                 "0:00:05.07",
                 "0:00:07.30",
                 "Lyrics",
-                r"{\k50}Three {\k173}four"
+                r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Three {\rPlain\t(499,500,\1c&H0000CCFF&)\t(2229,2230,\1c&H00FFEEDD&)}four"
             ),
             ("0:00:07.30", "0:00:08.00", "Plain", "♪ ♫"),
-            ("0:00:08.00", "0:00:09.12", "Lyrics", r"{\k112}Five"),
+            (
+                "0:00:08.00",
+                "0:00:09.12",
+                "Lyrics",
+                r"{\rPlain\1c&H0000CCFF&\t(1119,1120,\1c&H00FFEEDD&)}Five"
+            ),
             ("0:00:09.12", "0:00:10.37", "Plain", "♪ ♫"),
         ]
     );
@@ -235,28 +249,112 @@ fn highlights_shared_spans_together_without_double_counting_time() {
     assert_eq!(
         lyrics(&plan.subtitles),
         [
-            r"{\k37}One, — {\k141}two !",
-            r"{\k50}Three {\k173}four",
-            r"{\k112}Five",
+            r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One, {\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}— {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}!",
+            r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Three {\rPlain\t(499,500,\1c&H0000CCFF&)\t(2229,2230,\1c&H00FFEEDD&)}four",
+            r"{\rPlain\1c&H0000CCFF&\t(1119,1120,\1c&H00FFEEDD&)}Five",
         ]
     );
 }
 
-/// Advances the complete preview window without inheriting karaoke color or retaining finished lines.
+/// Keeps each line in a fixed row and reuses only the row whose previous lyric has finished.
 #[test]
-fn three_line_windows_advance_and_shrink_at_the_end() {
+fn visible_lines_keep_their_slots_until_they_finish() {
     let style = Style {
-        line_count: 3,
+        line_count: 2,
+        ..style()
+    };
+    let document = Document {
+        version: 1,
+        duration: 4.0,
+        lines: vec![
+            line(0.0, 1.0, vec![word(0.0, 1.0, "One")]),
+            line(1.0, 2.0, vec![word(1.0, 2.0, "Two")]),
+            line(2.0, 3.0, vec![word(2.0, 3.0, "Three")]),
+            line(3.0, 4.0, vec![word(3.0, 4.0, "Four")]),
+        ],
+    };
+    let plan = plan(&document, &style).unwrap();
+    let rows = records(&plan.subtitles, "[Events]", "Dialogue:");
+    assert_eq!(
+        rows.iter()
+            .map(|row| (row["Start"], row["End"]))
+            .collect::<Vec<_>>(),
+        [
+            ("0:00:00.00", "0:00:01.00"),
+            ("0:00:00.00", "0:00:02.00"),
+            ("0:00:01.00", "0:00:03.00"),
+            ("0:00:02.00", "0:00:04.00"),
+        ]
+    );
+    for (index, row) in rows.iter().enumerate() {
+        let expected = if index % 2 == 0 {
+            r"{\an5\pos(640,312)}"
+        } else {
+            r"{\an5\pos(640,408)}"
+        };
+        assert!(row["Text"].starts_with(expected), "{}", row["Text"]);
+        assert!(!row["Text"].contains(r"\N"));
+    }
+}
+
+/// Measures word effects from the preview event's start and finishes the fade promptly on held notes.
+#[test]
+fn previews_wait_until_word_onset_before_a_short_color_transition() {
+    let style = Style {
+        line_count: 2,
+        highlight_transition_ms: 120,
         ..style()
     };
     let plan = plan(&document(), &style).unwrap();
+    let text = lyrics(&plan.subtitles);
+    assert!(
+        text[0].contains(r"{\rPlain\t(0,120,0.5,\1c&H0000CCFF&)\t(250,370,2,\1c&H00FFEEDD&)}One,"),
+        "{}",
+        text[0]
+    );
+    assert!(
+        text[0]
+            .contains(r"{\rPlain\t(370,490,0.5,\1c&H0000CCFF&)\t(1660,1780,2,\1c&H00FFEEDD&)}two"),
+        "{}",
+        text[0]
+    );
+    assert!(
+        text[1].contains(
+            r"{\rPlain\t(3840,3960,0.5,\1c&H0000CCFF&)\t(4220,4340,2,\1c&H00FFEEDD&)}Three"
+        ),
+        "{}",
+        text[1]
+    );
+}
+
+/// Clears overlaps at the next onset and fits both fades inside short or collapsed word spans.
+#[test]
+fn active_highlights_end_at_the_next_onset_or_word_end() {
+    let document = Document {
+        version: 1,
+        duration: 3.0,
+        lines: vec![line(
+            0.0,
+            3.0,
+            vec![
+                word(0.0, 2.0, "Held"),
+                word(1.0, 1.1, "short"),
+                word(1.1, 1.1, "collapsed"),
+            ],
+        )],
+    };
+    let style = Style {
+        highlight_transition_ms: 80,
+        ..style()
+    };
+    let plan = plan(&document, &style).unwrap();
     assert_eq!(
         lyrics(&plan.subtitles),
-        [
-            r"{\k37}One, {\k141}two{\rPlain}\NThree four\NFive",
-            r"{\k50}Three {\k173}four{\rPlain}\NFive",
-            r"{\k112}Five",
-        ]
+        [concat!(
+            r"{\rPlain\t(0,80,0.5,\1c&H0000CCFF&)\t(920,1000,2,\1c&H00FFEEDD&)}Held ",
+            r"{\rPlain\t(1000,1050,0.5,\1c&H0000CCFF&)\t(1050,1100,2,\1c&H00FFEEDD&)}short ",
+            r"{\rPlain}collapsed",
+        )]
     );
 }
 
@@ -272,8 +370,18 @@ fn adjacent_lines_have_no_rest_between_them() {
     assert_eq!(
         events(&plan.subtitles),
         [
-            ("0:00:00.00", "0:00:00.37", "Lyrics", r"{\k37}One"),
-            ("0:00:00.37", "0:00:10.37", "Lyrics", r"{\k1000}Two"),
+            (
+                "0:00:00.00",
+                "0:00:00.37",
+                "Lyrics",
+                r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One"
+            ),
+            (
+                "0:00:00.37",
+                "0:00:10.37",
+                "Lyrics",
+                r"{\rPlain\1c&H0000CCFF&\t(9999,10000,\1c&H00FFEEDD&)}Two"
+            ),
         ]
     );
 }
@@ -329,7 +437,12 @@ fn equal_source_line_starts_emit_one_rest_and_one_display_window() {
         events(&plan.subtitles),
         [
             ("0:00:00.00", "0:00:01.00", "Plain", "♪ ♫"),
-            ("0:00:01.00", "0:00:10.37", "Lyrics", r"{\k937}Visible"),
+            (
+                "0:00:01.00",
+                "0:00:10.37",
+                "Lyrics",
+                r"{\rPlain\1c&H0000CCFF&\t(9369,9370,\1c&H00FFEEDD&)}Visible"
+            ),
         ]
     );
 }
@@ -371,7 +484,7 @@ fn consumes_lockstep_json_with_carried_and_spread_words() {
             "0:00:00.00",
             "0:00:01.50",
             "Lyrics",
-            r"{\k50}Oui, — {\k100}夜"
+            r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Oui, {\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}— {\rPlain\t(499,500,\1c&H0000CCFF&)\t(1499,1500,\1c&H00FFEEDD&)}夜"
         ),]
     );
 }
@@ -407,9 +520,9 @@ fn escapes_literal_lyric_braces_in_current_and_preview_text() {
     assert_eq!(
         lyrics(&plan.subtitles),
         [
-            r"{\k178}\{Oui\},{\rPlain}\N\{夜\}",
-            r"{\k223}\{夜\}{\rPlain}\NFive",
-            r"{\k112}Five",
+            r"{\rPlain\1c&H0000CCFF&\t(1779,1780,\1c&H00FFEEDD&)}\{Oui\},",
+            r"{\rPlain\t(3839,3840,\1c&H0000CCFF&)\t(6069,6070,\1c&H00FFEEDD&)}\{夜\}",
+            r"{\rPlain\t(2929,2930,\1c&H0000CCFF&)\t(4049,4050,\1c&H00FFEEDD&)}Five",
         ]
     );
 }

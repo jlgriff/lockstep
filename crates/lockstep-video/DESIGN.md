@@ -22,29 +22,33 @@ half-open: start included, end excluded. Adjacent ranges do not overlap.
 Track duration must be finite and positive. Use the supplied timestamps without
 adding a lead offset; Lockstep already accounts for its own display lead.
 
-`line_count` counts source lyric lines: current line first, followed by upcoming
-lines. A new line replaces the previous display window; old lines are not retained.
-Lockstep guarantees increasing line starts but can emit overlapping or zero-length
-spans. A newer start ends the older display window; empty spans are skipped.
-Only gaps between display windows become musical notes, including intro and outro.
-An empty lyric track is one full-length note cue.
+`line_count` counts fixed lyric rows. Source line `i` occupies row `i % line_count`:
+it appears as a preview, highlights in place, and disappears at completion. A vacated row
+can show a future line; other rows never move or recenter. Each source line has one ASS
+event with an explicit `\pos`, including its preview period. A new lyric's start truncates
+an overlapping older sung span; zero-length spans are skipped. Gaps between sung spans
+show notes below the lyric rows, allowing existing previews to stay visible.
 
-Highlight each whole word at its onset and retain its highlight until its line
-leaves the screen. Words sharing a span form one karaoke group, so carried words
-do not advance timing twice. Advance karaoke timing to the next group's start,
-including any inter-word gap, and use the final end for the last group. Summing
-word durations alone would pull later highlights early when there are gaps.
-This retains the existing cumulative karaoke design.
+Only the active word is highlighted. The default is soft cyan (`#67E8F9`) over navy, with
+white surrounding text. An 80ms ease-out at onset brings in the accent promptly; an 80ms
+ease-in returns to white by the earlier of word end, the next distinct onset, or line end.
+Each fade is capped at half that interval, so short words do not overlap transitions.
+Empty spans stay plain. Held words retain the accent until their closing fade; gaps have
+no active highlight. Words sharing an onset can highlight together because the source
+does not distinguish them. Times are absolute offsets from the event's preview start;
+gaps cannot accumulate timing drift. Glyph positions and original punctuation spacing stay fixed.
 
-ASS is the planned rendering interchange format. Generate one dialogue event per
-display window or rest, not one event per video frame or word. Use two styles:
+ASS is the rendering interchange format. Generate one dialogue event per lyric or rest,
+not one event per video frame or word. Use two styles:
 `Lyrics` (highlight primary color, text secondary color) and `Plain` (text color
-for both). Upcoming lines start with a `Plain` reset and explicit line breaks;
-notes and lines without word timings also use `Plain`.
+for both). Every word uses a `Plain` reset and bounded ASS color transforms. Notes and lines
+without word timings use `Plain`. Setting `highlight_transition_ms` to zero uses 1ms changes
+ending at the onset and endpoint; a word already active at event start uses a static accent.
+These avoid ASS's special zero-duration transform semantics while remaining instant at video frame rates.
 Escape literal lyric braces in current and preview text.
 
 ASS uses centiseconds; Lockstep already emits hundredths of seconds. Convert
-absolute endpoints to centiseconds before subtracting to obtain karaoke durations;
+absolute endpoints to centiseconds before subtracting to obtain animation offsets;
 do not accumulate rounded deltas. Background schedules retain millisecond precision
 independently of ASS timing. Visible changes occur on encoded frame boundaries.
 
@@ -88,12 +92,17 @@ panic does not hide later cases. No rendering dependency is needed for these tes
 cargo test --workspace --no-fail-fast
 ```
 
-The contract suite verifies timing, styling, validation, image schedules, and the complete
-ASS event sequence without requiring a rendering dependency. Pixel-level verification still
-needs an FFmpeg build with libass plus a fixed test font and should cover audio, duration,
-image changes, text colors, and preview behavior. Image fitting uses center-cropped cover
-scaling. Long-line layout, font fallback, literal backslashes, and audio-duration mismatches
-remain dependent on libass and FFmpeg behavior.
+The contract suite verifies timing, styling, validation, image schedules, and ASS events
+without requiring a renderer. The optional `tests/render.rs` suite encodes short fixtures
+using FFmpeg/libass and Arial, then checks stable row positions and highlight transitions
+in decoded frames. Run it with `cargo test -p lockstep-video --test render -- --ignored`,
+setting `LOCKSTEP_VIDEO_FFMPEG` if FFmpeg is not on PATH. Image fitting uses center-cropped
+cover scaling. Long-line layout, font fallback, literal backslashes, and audio-duration
+mismatches remain dependent on libass and FFmpeg behavior.
+
+`scripts/setup-video.sh` installs macOS dependencies and a persistent model once.
+`scripts/lyric-video.sh` composes the two binaries, saves timings, and optionally reuses them
+for restyling. No alignment or transcription logic is added to the video library.
 
 FFmpeg must include the libass-backed `ass` filter; some FFmpeg builds omit it.
 Check filter availability explicitly and report a useful error. See

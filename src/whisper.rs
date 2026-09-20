@@ -6,7 +6,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Longest a single word is allowed to run, so instrumental breaks are seen rather than absorbed.
+/// Default tail for a word without later token evidence, so instrumental breaks remain visible.
 const MAX_WORD: f64 = 1.0;
 
 /// Longest silence inside one word before its earlier tokens are treated as strays.
@@ -35,6 +35,7 @@ pub struct Config {
     pub binary: Option<PathBuf>,
     pub model: Option<PathBuf>,
     pub dtw: Option<String>,
+    pub no_gpu: bool,
 }
 
 #[derive(Deserialize)]
@@ -57,6 +58,7 @@ struct RawToken {
 struct Partial {
     text: String,
     times: Vec<f64>,
+    last_time: Option<f64>,
 }
 
 /// True for whisper's own markers and for the filler it emits over instrumental passages.
@@ -85,12 +87,18 @@ pub fn parse(json: &str) -> Result<Vec<Heard>> {
             continue;
         }
         let time = (token.t_dtw >= 0).then(|| token.t_dtw as f64 / 100.0);
+        let onset_time = time.filter(|_| !key(&token.text).is_empty());
         match words.last_mut() {
             Some(word) if !token.text.starts_with(' ') => {
                 word.text.push_str(&token.text);
-                word.times.extend(time);
+                word.times.extend(onset_time);
+                word.last_time = time.or(word.last_time);
             }
-            _ => words.push(Partial { text: token.text.clone(), times: Vec::from_iter(time) }),
+            _ => words.push(Partial {
+                text: token.text.clone(),
+                times: Vec::from_iter(onset_time),
+                last_time: time,
+            }),
         }
     }
 
@@ -99,7 +107,8 @@ pub fn parse(json: &str) -> Result<Vec<Heard>> {
         .filter_map(|word| {
             let start = onset(&word.times)?;
             let key = key(&word.text);
-            (!key.is_empty()).then_some(Heard { key, start, end: start + MAX_WORD })
+            let end = (start + MAX_WORD).max(word.last_time.unwrap_or(start));
+            (!key.is_empty()).then_some(Heard { key, start, end })
         })
         .collect();
 
@@ -218,17 +227,17 @@ pub fn transcribe(wav: &Path, config: &Config) -> Result<String> {
         Some(preset) => preset.clone(),
         None => dtw_preset(&model)?,
     };
-    // `-nfa` matters: flash attention is on by default and silently disables DTW, which leaves
-    // every word in a segment sharing one timestamp.
     let out = wav.with_extension("");
-    let status = Command::new(&binary)
-        .args(["-m".as_ref(), model.as_os_str(), "-f".as_ref(), wav.as_os_str()])
+    let mut command = Command::new(&binary);
+    command.args(["-m".as_ref(), model.as_os_str(), "-f".as_ref(), wav.as_os_str()])
         .args(["-nfa", "-ml", "1", "-sow", "-oj", "-ojf", "-dtw", &dtw])
-        .args(["-of".as_ref(), out.as_os_str()])
-        .status()
+        .args(["-of".as_ref(), out.as_os_str()]);
+    if config.no_gpu { command.arg("-ng"); }
+    eprintln!("Transcribing with {}{}...", model.display(), if config.no_gpu { " on CPU" } else { "" });
+    let output = command.output()
         .with_context(|| format!("running {}", binary.display()))?;
-    if !status.success() {
-        bail!("{} exited with {status}", binary.display());
+    if !output.status.success() {
+        bail!("{} exited with {}: {}", binary.display(), output.status, String::from_utf8_lossy(&output.stderr));
     }
 
     let json = out.with_extension("json");
@@ -284,6 +293,15 @@ mod tests {
     fn a_held_syllable_is_not_treated_as_a_stray() {
         let heard = parse(&transcript(&[(" ho", 100), ("ld", 350)])).unwrap();
         assert_eq!(heard[0].start, 1.0);
+    }
+
+    /// Keeps the onset and held duration when sentence punctuation arrives much later than the sung word.
+    #[test]
+    fn punctuation_after_a_held_note_does_not_replace_the_word_onset() {
+        let heard = parse(&transcript(&[(" whom", 5340), (" obey", 5394), (".", 5698), (" A", 6002)])).unwrap();
+        assert_eq!(heard[1].key, "obey");
+        assert_eq!(heard[1].start, 53.94);
+        assert_eq!(heard[1].end, 56.98);
     }
 
     #[test]

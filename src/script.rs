@@ -49,6 +49,7 @@ pub fn parse(text: &str) -> Vec<Line> {
             text: row.to_string(),
             tokens: row
                 .split_whitespace()
+                .flat_map(|word| word.split_inclusive(['—', '–']))
                 .map(|raw| Token { raw: raw.to_string(), key: key(raw) })
                 .collect(),
         })
@@ -58,6 +59,16 @@ pub fn parse(text: &str) -> Vec<Line> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Aligns words separated by an em dash independently without altering the printed lyric.
+    #[test]
+    fn em_dashes_separate_alignment_words() {
+        let lines = parse("The servant—whom obey?\nHe turned—the road lay bare");
+        assert_eq!(lines[0].text, "The servant—whom obey?");
+        assert_eq!(lines[0].keys().collect::<Vec<_>>(), ["the", "servant", "whom", "obey"]);
+        assert_eq!(lines[0].tokens[1].raw, "servant—");
+        assert_eq!(lines[1].keys().collect::<Vec<_>>(), ["he", "turned", "the", "road", "lay", "bare"]);
+    }
 
     #[test]
     fn key_keeps_only_letters_and_digits() {

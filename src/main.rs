@@ -81,6 +81,10 @@ struct Args {
     #[arg(long, value_name = "PRESET")]
     dtw: Option<String>,
 
+    /// Run Whisper on CPU, including machines where Metal or GPU allocation is unavailable
+    #[arg(long)]
+    no_gpu: bool,
+
     /// Keep the intermediate WAV and transcript, and print the directory holding them
     #[arg(long)]
     keep: bool,
@@ -101,6 +105,7 @@ fn run(args: &Args, work: &Path) -> Result<()> {
                 binary: args.whisper.clone(),
                 model: args.model.clone(),
                 dtw: args.dtw.clone(),
+                no_gpu: args.no_gpu,
             },
         )?,
     };

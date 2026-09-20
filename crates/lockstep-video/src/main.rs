@@ -14,8 +14,9 @@ struct Args {
     #[arg(value_name = "AUDIO")]
     audio: PathBuf,
 
+    /// Output video [default: AUDIO lyric video.mp4 beside the recording]
     #[arg(short, long, value_name = "VIDEO")]
-    output: PathBuf,
+    output: Option<PathBuf>,
 
     #[arg(long, default_value_t = Style::default().width)]
     width: u32,
@@ -44,6 +45,10 @@ struct Args {
     #[arg(long, default_value_t = Style::default().line_count)]
     lines: usize,
 
+    /// Duration of each active-word fade in and out; zero switches instantly
+    #[arg(long, default_value_t = Style::default().highlight_transition_ms)]
+    highlight_transition_ms: u32,
+
     #[arg(long, default_value_t = Style::default().rest_text)]
     rest_text: String,
 
@@ -55,6 +60,10 @@ struct Args {
 /// Passes command-line input directly into the rendering library.
 fn main() -> Result<()> {
     let args = Args::parse();
+    let output = args.output.unwrap_or_else(|| {
+        let stem = args.audio.file_stem().unwrap_or_default().to_string_lossy();
+        args.audio.with_file_name(format!("{stem} lyric video.mp4"))
+    });
     let background_images = args
         .background_image
         .iter()
@@ -63,7 +72,7 @@ fn main() -> Result<()> {
     render(&RenderRequest {
         timings: args.timings,
         audio: args.audio,
-        output: args.output,
+        output: output.clone(),
         style: Style {
             width: args.width,
             height: args.height,
@@ -74,8 +83,11 @@ fn main() -> Result<()> {
             font: args.font,
             font_size: args.font_size,
             line_count: args.lines,
+            highlight_transition_ms: args.highlight_transition_ms,
             rest_text: args.rest_text,
             background_images,
         },
-    })
+    })?;
+    println!("{}", output.display());
+    Ok(())
 }

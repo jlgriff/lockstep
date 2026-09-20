@@ -70,6 +70,7 @@ pub struct Style {
     pub font: String,
     pub font_size: u32,
     pub line_count: usize,
+    pub highlight_transition_ms: u32,
     pub rest_text: String,
     pub background_images: Vec<BackgroundImage>,
 }
@@ -81,12 +82,13 @@ impl Default for Style {
             width: 1920,
             height: 1080,
             frames_per_second: 30,
-            background_color: "#000000".to_string(),
+            background_color: "#0B1730".to_string(),
             text_color: "#FFFFFF".to_string(),
-            highlight_color: "#FFD700".to_string(),
+            highlight_color: "#67E8F9".to_string(),
             font: "sans-serif".to_string(),
             font_size: 72,
             line_count: 2,
+            highlight_transition_ms: 80,
             rest_text: "♪ ♪ ♪".to_string(),
             background_images: Vec::new(),
         }
@@ -190,8 +192,7 @@ pub fn render(request: &RenderRequest) -> Result<()> {
         .with_context(|| format!("reading timing file {}", request.timings.display()))?;
     let document = parse_document(&json)?;
     let plan = plan(&document, &request.style)?;
-    let ffmpeg = std::env::var_os("LOCKSTEP_VIDEO_FFMPEG").unwrap_or_else(|| "ffmpeg".into());
-    require_ass_filter(&ffmpeg)?;
+    let ffmpeg = find_ffmpeg()?;
     let subtitle_file = TemporarySubtitle::create(&plan.subtitles)?;
     run_ffmpeg(&ffmpeg, request, &document, &plan, subtitle_file.path())
 }
@@ -405,59 +406,117 @@ fn ass_color(color: &str) -> String {
     format!("&H00{}{}{}", &color[5..7], &color[3..5], &color[1..3])
 }
 
-/// Appends a complete, non-overlapping display schedule to an ASS script.
+/// Gives every lyric one persistent row and shows notes in gaps between sung lines.
 fn append_events(script: &mut String, document: &Document, style: &Style) {
     let lines = document
         .lines
         .iter()
         .filter(|line| line.end > line.start)
         .collect::<Vec<_>>();
-    let mut cursor = 0.0;
-    for (index, line) in lines.iter().enumerate() {
-        let start = line.start.max(cursor);
-        let next_start = lines
-            .get(index + 1)
-            .map_or(document.duration, |next| next.start);
-        let end = line.end.min(next_start).min(document.duration);
-        if end <= start {
-            continue;
-        }
-        if start > cursor {
-            append_dialogue(
-                script,
-                cursor,
-                start,
-                "Plain",
-                &escape_text(&style.rest_text),
+    let windows = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let end = line.end.min(
+                lines
+                    .get(index + 1)
+                    .map_or(document.duration, |next| next.start),
             );
+            (end > line.start).then_some((*line, end))
+        })
+        .collect::<Vec<_>>();
+    let mut cursor = 0.0;
+    for (index, (line, end)) in windows.iter().enumerate() {
+        if line.start > cursor {
+            append_rest(script, cursor, line.start, style);
         }
-        let (event_style, mut text) = if line.words.is_empty() {
+        let preview_index = index.saturating_sub(style.line_count - 1);
+        let mut display_start = windows[preview_index].0.start;
+        if index >= style.line_count {
+            display_start = display_start.max(windows[index - style.line_count].1);
+        }
+        let (event_style, body) = if line.words.is_empty() {
             ("Plain", escape_text(&line.text))
         } else {
-            ("Lyrics", karaoke_text(line, end))
+            ("Lyrics", active_word_text(line, display_start, *end, style))
         };
-        let previews = lines
-            .iter()
-            .skip(index + 1)
-            .take(style.line_count - 1)
-            .map(|preview| escape_text(&preview.text))
-            .collect::<Vec<_>>();
-        if !previews.is_empty() {
-            text.push_str(r"{\rPlain}\N");
-            text.push_str(&previews.join(r"\N"));
-        }
-        append_dialogue(script, start, end, event_style, &text);
-        cursor = end;
+        let y = row_y(style, index % style.line_count);
+        let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
+        append_dialogue(script, display_start, *end, event_style, &text);
+        cursor = *end;
     }
     if cursor < document.duration {
-        append_dialogue(
-            script,
-            cursor,
-            document.duration,
-            "Plain",
-            &escape_text(&style.rest_text),
-        );
+        append_rest(script, cursor, document.duration, style);
     }
+}
+
+/// Centers fixed lyric slots without recentering when another slot becomes empty.
+fn row_y(style: &Style, slot: usize) -> i64 {
+    i64::from(style.height) / 2
+        + (2 * slot as i64 + 1 - style.line_count as i64) * i64::from(style.font_size) * 3 / 4
+}
+
+/// Places notes below preview rows during silence, or centrally in single-line mode.
+fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
+    let y = if style.line_count == 1 {
+        i64::from(style.height) / 2
+    } else {
+        row_y(style, style.line_count)
+    };
+    let text = format!(
+        r"{{\an5\pos({},{y})}}{}",
+        style.width / 2,
+        escape_text(&style.rest_text)
+    );
+    append_dialogue(script, start, end, "Plain", &text);
+}
+
+/// Highlights only active words with effects contained within their spans and fixed glyph positions.
+fn active_word_text(line: &Line, display_start: f64, event_end: f64, style: &Style) -> String {
+    let mut text = String::new();
+    let mut remaining = line.text.as_str();
+    let highlight = ass_color(&style.highlight_color);
+    let plain = ass_color(&style.text_color);
+    let mut next = 0;
+    for (index, word) in line.words.iter().enumerate() {
+        if let Some(offset) = remaining.find(&word.text) {
+            text.push_str(&escape_text(&remaining[..offset]));
+            remaining = &remaining[offset + word.text.len()..];
+        } else if index > 0 {
+            text.push(' ');
+        }
+        while next < line.words.len() && line.words[next].start <= word.start {
+            next += 1;
+        }
+        let end = word
+            .end
+            .min(line.words.get(next).map_or(event_end, |word| word.start))
+            .min(event_end);
+        let start = centiseconds(word.start).saturating_sub(centiseconds(display_start)) * 10;
+        let end = centiseconds(end).saturating_sub(centiseconds(display_start)) * 10;
+        text.push_str(r"{\rPlain");
+        if end > start {
+            let fade = u64::from(style.highlight_transition_ms).min((end - start) / 2);
+            if fade > 0 {
+                write!(
+                    text,
+                    r"\t({start},{},0.5,\1c{highlight}&)\t({},{end},2,\1c{plain}&)",
+                    start + fade,
+                    end - fade
+                )
+                .unwrap();
+            } else {
+                if start == 0 {
+                    write!(text, r"\1c{highlight}&").unwrap();
+                } else {
+                    write!(text, r"\t({},{start},\1c{highlight}&)", start - 1).unwrap();
+                }
+                write!(text, r"\t({},{end},\1c{plain}&)", end - 1).unwrap();
+            }
+        }
+        write!(text, "}}{}", escape_text(&word.text)).unwrap();
+    }
+    text
 }
 
 /// Writes one ASS dialogue row using absolute second endpoints.
@@ -469,44 +528,6 @@ fn append_dialogue(script: &mut String, start: f64, end: f64, style: &str, text:
         ass_time(end)
     )
     .unwrap();
-}
-
-/// Builds cumulative ASS karaoke groups from words sharing recorded spans.
-fn karaoke_text(line: &Line, event_end: f64) -> String {
-    let mut groups: Vec<(f64, f64, Vec<&str>)> = Vec::new();
-    for word in &line.words {
-        if let Some(group) = groups
-            .last_mut()
-            .filter(|group| group.0 == word.start && group.1 == word.end)
-        {
-            group.2.push(&word.text);
-        } else {
-            groups.push((word.start, word.end, vec![&word.text]));
-        }
-    }
-    let mut text = String::new();
-    for (index, group) in groups.iter().enumerate() {
-        let group_start = centiseconds(group.0);
-        let group_end = groups
-            .get(index + 1)
-            .map_or_else(|| centiseconds(event_end), |next| centiseconds(next.0));
-        if index > 0 {
-            text.push(' ');
-        }
-        write!(
-            text,
-            r"{{\k{}}}{}",
-            group_end.saturating_sub(group_start),
-            group
-                .2
-                .iter()
-                .map(|word| escape_text(word))
-                .collect::<Vec<_>>()
-                .join(" ")
-        )
-        .unwrap();
-    }
-    text
 }
 
 /// Escapes literal braces that ASS would otherwise parse as override blocks.
@@ -553,6 +574,24 @@ fn require_ass_filter(ffmpeg: &std::ffi::OsStr) -> Result<()> {
     Ok(())
 }
 
+/// Finds libass-enabled FFmpeg, including Homebrew's unlinked full build.
+fn find_ffmpeg() -> Result<std::ffi::OsString> {
+    if let Some(binary) = std::env::var_os("LOCKSTEP_VIDEO_FFMPEG") {
+        require_ass_filter(&binary)?;
+        return Ok(binary);
+    }
+    for binary in [
+        "ffmpeg",
+        "/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg",
+        "/usr/local/opt/ffmpeg-full/bin/ffmpeg",
+    ] {
+        if require_ass_filter(binary.as_ref()).is_ok() {
+            return Ok(binary.into());
+        }
+    }
+    bail!("no FFmpeg with the ass filter found; install ffmpeg-full or set LOCKSTEP_VIDEO_FFMPEG to a libass-enabled build")
+}
+
 /// Runs FFmpeg with a color base, optional timed image overlays, ASS, and copied audio timing.
 fn run_ffmpeg(
     ffmpeg: &std::ffi::OsStr,
@@ -563,7 +602,16 @@ fn run_ffmpeg(
 ) -> Result<()> {
     let mut command = Command::new(ffmpeg);
     command
-        .args(["-hide_banner", "-y", "-f", "lavfi", "-i"])
+        .args([
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-nostdin",
+            "-y",
+            "-f",
+            "lavfi",
+            "-i",
+        ])
         .arg(&plan.video_source)
         .arg("-i")
         .arg(&request.audio);

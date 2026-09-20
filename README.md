@@ -48,9 +48,9 @@ subtitle file instead.
 
 **The recording** can be mp3, wav, flac, aac, m4a/alac or ogg. No converting first.
 
-**The script** is plain text, one line per line of output. Blank lines are dropped. Punctuation
-is kept in the output and ignored when matching, so `There's` and `theres` are the same word to
-the aligner.
+**The script** is plain text, one line per line of output. Blank lines and whole-line bracketed
+labels such as `[Verse 1]` are dropped. Punctuation is kept in the output and ignored when
+matching; em and en dashes separate words, so `servant—whom` gets two timing anchors.
 
 ## Options
 
@@ -62,28 +62,64 @@ the aligner.
 | `--model` | model file, also `$LOCKSTEP_MODEL` |
 | `--whisper` | whisper.cpp executable, also `$LOCKSTEP_WHISPER` |
 | `--dtw` | alignment-heads preset, if the model's filename does not imply one |
+| `--no-gpu` | run Whisper on CPU when GPU/Metal is unavailable |
 | `--keep` | keep the intermediate WAV and transcript, and say where |
 
 ## Lyric videos
 
 `lockstep-video` is a separate workspace crate. It reads Lockstep JSON, writes timed ASS
 karaoke subtitles, and asks FFmpeg to encode them with the original audio. FFmpeg must include
-the libass-backed `ass` filter.
+the libass-backed `ass` filter. The renderer checks `PATH` and Homebrew's unlinked `ffmpeg-full`
+installation automatically; `LOCKSTEP_VIDEO_FFMPEG` selects a specific executable.
+
+On macOS with Rust and Homebrew installed, run setup once, then one command per song:
+
+```sh
+./scripts/setup-video.sh
+./scripts/lyric-video.sh "song.mp3" "lyrics.md"
+```
+
+Setup installs Whisper and FFmpeg, downloads the English base model into `~/.cache/whisper`,
+and builds both Rust tools. The song command builds any changed code, aligns on CPU, saves
+`song.lockstep.json`, and renders `song lyric video.mp4` beside the audio. No temporary wrappers,
+manual section-label removal, or environment variables are needed. Errors stop the workflow.
+For manual installation, install Whisper and its model as above, install libass-enabled FFmpeg,
+then build with `cargo build --release --workspace`.
+
+Render again with saved timings when changing styling:
+
+```sh
+./scripts/lyric-video.sh "song.mp3" "lyrics.md" --reuse-timings --font 'Avenir Next' --font-size 64
+```
+
+Omit `--reuse-timings` after changing audio or lyrics. Remaining options go to `lockstep-video`;
+`-o path.mp4` chooses the output. `LOCKSTEP_MODEL` and `LOCKSTEP_WHISPER` can select an installed
+model or Whisper executable. To use pre-existing timing JSON directly:
 
 ```
 cargo build --release -p lockstep-video
 target/release/lockstep-video recording.json recording.mp3 -o recording.mp4
 ```
 
-Its defaults are a black 1920x1080 canvas, white 72-pixel sans-serif text, a gold current-word
-highlight, two displayed lines, and 30 frames per second. Every value is configurable:
+Defaults: dark blue (`#0B1730`) 1920x1080 canvas, white 72-pixel sans-serif text, soft cyan
+(`#67E8F9`) for the active word, two fixed lyric rows, and 30 FPS. Each line stays in its row
+from preview through completion; the next preview uses a vacated row. Words ease into cyan
+over 80ms from their recorded onset and back to white before their end or the next onset.
+Both fades shorten for quick words. Completed and upcoming words remain white; internal
+pauses have no highlighted word. Words sharing a timing span still highlight together because
+the input does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
+Notes appear below preview rows during instrumental gaps.
+
+The palette and timing are design choices: strong text/background contrast follows
+[W3C readability guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),
+while fixed text geometry keeps the highlight from moving surrounding words.
 
 ```
 lockstep-video recording.json recording.mp3 -o recording.mp4 \
   --width 1280 --height 720 --frames-per-second 24 \
   --background-color '#112233' --text-color '#DDEEFF' \
   --highlight-color '#FFCC00' --font 'Avenir Next' --font-size 64 \
-  --lines 3 --rest-text '♪ ♫'
+  --lines 3 --rest-text '♪ ♫' --highlight-transition-ms 80
 ```
 
 One unqualified image fills the full video. Give every image a half-open timestamp range when
@@ -137,6 +173,8 @@ line's `start`; the run-out is between the last line's `end` and `duration`.
 | `spread` | nothing in the line was heard, so its words are spaced evenly between the nearest anchors. Treat these as placeholders |
 
 Two words with the same span are timed as a unit and should be highlighted together.
+Punctuation timestamps cannot replace a word's onset; late punctuation can extend a held
+word's end. Whisper still estimates timing, and words marked `carried` or `spread` remain guesses.
 
 ### WebVTT and LRC
 
@@ -255,8 +293,13 @@ both come with a Python or Kaldi stack. lockstep has not been benchmarked agains
 ## Development
 
 ```
-cargo test
+cargo test --workspace
+LOCKSTEP_VIDEO_FFMPEG=/opt/homebrew/opt/ffmpeg-full/bin/ffmpeg \
+  cargo test -p lockstep-video --test render -- --ignored
 ```
+
+The optional rendered tests require libass and Arial. They compare encoded frames to catch
+preview movement and verify a brief highlight transition at onset.
 
 `unsafe_code = "forbid"` is set on the crate. Minimum supported Rust is 1.85, set by clap and
 verified by building and testing on that toolchain.
