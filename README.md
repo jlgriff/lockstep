@@ -166,6 +166,9 @@ Both fades shorten for quick words. Completed and upcoming words remain white; i
 pauses have no highlighted word. Leading and trailing punctuation stays white while the word
 itself changes color; internal apostrophes remain part of the word. Words sharing a timing span still highlight together because the input
 does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
+`--highlight-style underline` keeps every lyric white and adds a thin underline only beneath
+the active word. It uses the same word spans but no color transition, making it calmer than the
+default `color` style. Leading and trailing punctuation is not underlined.
 `--highlight-words false` disables all per-word color and animation while preserving the lyric
 pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
 which defaults to `true`. Notes appear centered only while no lyric page is visible.
@@ -179,7 +182,7 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
   --width 1280 --height 720 --frames-per-second 24 \
   --background-color '#112233' --text-color '#DDEEFF' \
   --highlight-color '#FFCC00' --font 'Avenir Next' --font-size 64 \
-  --lines 3 --rest-text '♪ ♫' --highlight-transition-ms 80
+  --lines 3 --rest-text '♪ ♫' --highlight-style underline
 ```
 
 One image without timestamps stays for the whole video. Images fit inside the canvas, centered

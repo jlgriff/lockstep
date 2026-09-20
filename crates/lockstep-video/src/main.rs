@@ -2,7 +2,7 @@
 
 use anyhow::Result;
 use clap::Parser;
-use lockstep_video::{parse_background_image, render, RenderRequest, Style};
+use lockstep_video::{parse_background_image, render, HighlightStyle, RenderRequest, Style};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -50,6 +50,10 @@ struct Args {
     #[arg(long, action = clap::ArgAction::Set, default_value_t = Style::default().highlight_words)]
     highlight_words: bool,
 
+    /// Treatment used for the currently spoken word
+    #[arg(long, value_enum, default_value = "color")]
+    highlight_style: HighlightStyle,
+
     /// Duration of each active-word fade in and out; zero switches instantly
     #[arg(long, default_value_t = Style::default().highlight_transition_ms)]
     highlight_transition_ms: u32,
@@ -89,6 +93,7 @@ fn main() -> Result<()> {
             font_size: args.font_size,
             line_count: args.lines,
             highlight_words: args.highlight_words,
+            highlight_style: args.highlight_style,
             highlight_transition_ms: args.highlight_transition_ms,
             rest_text: args.rest_text,
             background_images,

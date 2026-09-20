@@ -1,4 +1,4 @@
-use lockstep_video::{parse_document, plan, Document, Line, Style, Word};
+use lockstep_video::{parse_document, plan, Document, HighlightStyle, Line, Style, Word};
 use std::collections::BTreeMap;
 
 /// Supplies unequal centisecond spans so fixed durations and extra timing offsets cannot pass.
@@ -196,6 +196,29 @@ fn punctuation_is_excluded_from_word_highlighting() {
     assert!(lyric.contains(r"}obey{\rPlain}?),"), "{lyric}");
     assert!(lyric.contains("}merchant's{\\rPlain}!"), "{lyric}");
     assert!(lyric.ends_with(r"{\rPlain}!"), "{lyric}");
+}
+
+/// Uses a quiet underline without applying the configured highlight color to lyric glyphs.
+#[test]
+fn underline_style_marks_only_the_current_word_without_recoloring_text() {
+    let style = Style {
+        highlight_style: HighlightStyle::Underline,
+        ..style()
+    };
+    let subtitles = plan(&document(), &style).unwrap().subtitles;
+    let events = events(&subtitles);
+    let event_text = events.iter().map(|event| event.3).collect::<String>();
+    assert!(event_text.contains(r"\u1"), "{event_text}");
+    assert!(!event_text.contains("&H0000CCFF"), "{event_text}");
+    let underlines = events
+        .iter()
+        .filter(|event| event.3.contains(r"\u1"))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        (underlines[0].0, underlines[0].1),
+        ("0:00:01.23", "0:00:01.60")
+    );
+    assert!(underlines[0].3.contains(r"\u1}One{\u0\alpha&HFF&},"));
 }
 
 /// Refuses future JSON versions before interpreting their timing schema.

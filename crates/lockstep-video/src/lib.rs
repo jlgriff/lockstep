@@ -58,6 +58,14 @@ pub struct BackgroundCue {
     pub range: TimeRange,
 }
 
+/// Visual treatment used to mark the currently spoken word.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, clap::ValueEnum)]
+pub enum HighlightStyle {
+    #[default]
+    Color,
+    Underline,
+}
+
 /// Visual and encoding choices for a lyric video.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Style {
@@ -71,6 +79,7 @@ pub struct Style {
     pub font_size: u32,
     pub line_count: usize,
     pub highlight_words: bool,
+    pub highlight_style: HighlightStyle,
     pub highlight_transition_ms: u32,
     pub rest_text: String,
     pub background_images: Vec<BackgroundImage>,
@@ -90,6 +99,7 @@ impl Default for Style {
             font_size: 72,
             line_count: 2,
             highlight_words: true,
+            highlight_style: HighlightStyle::Color,
             highlight_transition_ms: 80,
             rest_text: "♪ ♪ ♪".to_string(),
             background_images: Vec::new(),
@@ -435,14 +445,20 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
             append_rest(script, cursor, display_start, style);
         }
         for (slot, (line, end)) in page.iter().enumerate() {
-            let (event_style, body) = if !style.highlight_words || line.words.is_empty() {
+            let y = row_y(style, slot);
+            let (event_style, body) = if !style.highlight_words
+                || line.words.is_empty()
+                || style.highlight_style == HighlightStyle::Underline
+            {
                 ("Plain", escape_text(&line.text))
             } else {
                 ("Lyrics", active_word_text(line, display_start, *end, style))
             };
-            let y = row_y(style, slot);
             let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
             append_dialogue(script, display_start, display_end, event_style, &text);
+            if style.highlight_words && style.highlight_style == HighlightStyle::Underline {
+                append_underlines(script, line, display_start, *end, y, style);
+            }
         }
         cursor = display_end;
     }
@@ -471,6 +487,61 @@ fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
         escape_text(&style.rest_text)
     );
     append_dialogue(script, start, end, "Plain", &text);
+}
+
+/// Overlays a thin underline during each spoken word without recoloring the base lyric text.
+fn append_underlines(
+    script: &mut String,
+    line: &Line,
+    display_start: f64,
+    event_end: f64,
+    y: i64,
+    style: &Style,
+) {
+    for (index, word) in line.words.iter().enumerate() {
+        let start = word.start.max(display_start);
+        let end = word
+            .end
+            .min(
+                line.words
+                    .iter()
+                    .skip(index + 1)
+                    .find(|next| next.start > word.start)
+                    .map_or(event_end, |next| next.start),
+            )
+            .min(event_end);
+        if end <= start || emphasis_parts(&word.text).1.is_empty() {
+            continue;
+        }
+        let body = underline_word_text(line, index);
+        let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
+        append_dialogue(script, start, end, "Plain", &text);
+    }
+}
+
+/// Makes one word core visible and underlined while retaining transparent text for layout.
+fn underline_word_text(line: &Line, target: usize) -> String {
+    let mut text = String::from(r"{\alpha&HFF&}");
+    let mut remaining = line.text.as_str();
+    for (index, word) in line.words.iter().enumerate() {
+        if let Some(offset) = remaining.find(&word.text) {
+            text.push_str(&escape_text(&remaining[..offset]));
+            remaining = &remaining[offset + word.text.len()..];
+        } else if index > 0 {
+            text.push(' ');
+        }
+        if index == target {
+            let (leading, spoken, trailing) = emphasis_parts(&word.text);
+            text.push_str(&escape_text(leading));
+            write!(text, r"{{\alpha&H00&\u1}}{}", escape_text(spoken)).unwrap();
+            text.push_str(r"{\u0\alpha&HFF&}");
+            text.push_str(&escape_text(trailing));
+        } else {
+            text.push_str(&escape_text(&word.text));
+        }
+    }
+    text.push_str(&escape_text(remaining));
+    text
 }
 
 /// Highlights only active words with effects contained within their spans and fixed glyph positions.
