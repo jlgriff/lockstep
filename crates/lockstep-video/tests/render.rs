@@ -227,23 +227,27 @@ fn highlighted_pixels(frame: &[u8], right: bool) -> usize {
 }
 
 /// Finds the center of the soft indicator below a single lyric row.
-fn indicator_center(frame: &[u8]) -> Option<usize> {
-    let columns = frame
+fn indicator_center(frame: &[u8]) -> Option<(usize, usize)> {
+    let pixels = frame
         .chunks_exact(3)
         .enumerate()
         .filter(|(index, pixel)| {
             let y = index / 640;
-            (166..=175).contains(&y) && pixel.iter().all(|value| *value > 55)
+            (166..=190).contains(&y) && pixel.iter().all(|value| *value > 55)
         })
-        .map(|(index, _)| index % 640)
+        .map(|(index, _)| (index % 640, index / 640))
         .collect::<Vec<_>>();
-    Some((columns.iter().min()? + columns.iter().max()?) / 2)
+    let left = pixels.iter().map(|pixel| pixel.0).min()?;
+    let right = pixels.iter().map(|pixel| pixel.0).max()?;
+    let top = pixels.iter().map(|pixel| pixel.1).min()?;
+    let bottom = pixels.iter().map(|pixel| pixel.1).max()?;
+    Some(((left + right) / 2, (top + bottom) / 2))
 }
 
-/// Keeps the indicator visible through a breath and glides it to the next word.
+/// Centers a lower dot beneath each word while keeping it visible through a breath.
 #[test]
 #[ignore = "requires FFmpeg with libass and Arial"]
-fn underline_indicator_holds_then_moves_without_blinking() {
+fn dot_holds_then_moves_between_word_centers() {
     let fixture = Fixture::with_lyrics(
         "moving-indicator",
         r#"{"version":1,"duration":3,"lines":[
@@ -253,7 +257,7 @@ fn underline_indicator_holds_then_moves_without_blinking() {
         ]}
     ]}"#,
         Style {
-            highlight_style: HighlightStyle::Underline,
+            highlight_style: HighlightStyle::Dot,
             ..Style::default()
         },
     );
@@ -261,17 +265,18 @@ fn underline_indicator_holds_then_moves_without_blinking() {
     let moving = indicator_center(&fixture.frame("1.32")).expect("indicator vanished while moving");
     let arrived =
         indicator_center(&fixture.frame("1.55")).expect("indicator vanished after moving");
+    assert!(held.0.abs_diff(251) <= 5, "dot missed FIRST: {held:?}");
     assert!(
-        (225..=255).contains(&held),
-        "indicator missed FIRST: {held}"
+        arrived.0.abs_diff(369) <= 5,
+        "dot missed SECOND: {arrived:?}"
     );
     assert!(
-        (345..=395).contains(&arrived),
-        "indicator missed SECOND: {arrived}"
+        held.1 >= 172 && arrived.1 >= 172,
+        "dot is too high: {held:?}, {arrived:?}"
     );
     assert!(
-        held < moving && moving < arrived,
-        "{held}, {moving}, {arrived}"
+        held.0 < moving.0 && moving.0 < arrived.0,
+        "{held:?}, {moving:?}, {arrived:?}"
     );
 }
 

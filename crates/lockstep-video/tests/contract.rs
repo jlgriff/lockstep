@@ -198,13 +198,13 @@ fn punctuation_is_excluded_from_word_highlighting() {
     assert!(lyric.ends_with(r"{\rPlain}!"), "{lyric}");
 }
 
-/// Keeps one indicator present and moves it between words instead of blinking decorations.
+/// Keeps one fixed-size dot present and moves it between words instead of blinking decorations.
 #[test]
-fn underline_style_uses_a_continuous_moving_pill() {
+fn dot_style_uses_a_continuous_moving_indicator() {
     let mut document = document();
     document.lines.truncate(2);
     let style = Style {
-        highlight_style: HighlightStyle::Underline,
+        highlight_style: HighlightStyle::Dot,
         line_count: 2,
         ..style()
     };
@@ -231,6 +231,16 @@ fn underline_style_uses_a_continuous_moving_pill() {
     );
     assert!(indicators.first().unwrap().3.contains(r"\fad(120,0)"));
     assert!(indicators.last().unwrap().3.contains(r"\fad(0,120)"));
+    assert!(
+        indicators
+            .iter()
+            .all(|event| event.3.contains(r"\fscx10.67\fscy10.67")),
+        "{indicators:?}"
+    );
+    assert!(
+        indicators.iter().all(|event| !event.3.contains(r"\t(")),
+        "dot must not resize: {indicators:?}"
+    );
 }
 
 /// Refuses future JSON versions before interpreting their timing schema.

@@ -65,7 +65,8 @@ pub struct BackgroundCue {
 pub enum HighlightStyle {
     #[default]
     Color,
-    Underline,
+    #[value(alias = "underline")]
+    Dot,
 }
 
 /// Visual and encoding choices for a lyric video.
@@ -411,7 +412,7 @@ fn build_subtitles(document: &Document, style: &Style) -> String {
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     )
     .unwrap();
-    let measurer = (style.highlight_words && style.highlight_style == HighlightStyle::Underline)
+    let measurer = (style.highlight_words && style.highlight_style == HighlightStyle::Dot)
         .then(|| TextMeasurer::load(&style.font, style.font_size))
         .flatten();
     append_events(&mut script, document, style, measurer.as_ref());
@@ -458,7 +459,7 @@ fn append_events(
             let y = row_y(style, slot);
             let (event_style, body) = if !style.highlight_words
                 || line.words.is_empty()
-                || style.highlight_style == HighlightStyle::Underline
+                || style.highlight_style == HighlightStyle::Dot
             {
                 ("Plain", escape_text(&line.text))
             } else {
@@ -467,7 +468,7 @@ fn append_events(
             let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
             append_dialogue(script, display_start, display_end, event_style, &text);
         }
-        if style.highlight_words && style.highlight_style == HighlightStyle::Underline {
+        if style.highlight_words && style.highlight_style == HighlightStyle::Dot {
             append_indicator(script, page, display_start, display_end, style, measurer);
         }
         cursor = display_end;
@@ -504,11 +505,11 @@ struct IndicatorTarget {
     start: f64,
     x: f64,
     y: f64,
-    width: f64,
 }
 
 const INDICATOR_FADE_MS: u32 = 120;
 const INDICATOR_TRAVEL_MS: u32 = 160;
+const ASS_ADVANCE_SCALE: f64 = 0.85;
 const INDICATOR_PATH: &str =
     "m 0 50 b 0 22 22 0 50 0 b 78 0 100 22 100 50 b 100 78 78 100 50 100 b 22 100 0 78 0 50";
 
@@ -526,7 +527,7 @@ impl TextMeasurer {
         database.load_system_fonts();
         let requested = match font.to_ascii_lowercase().as_str() {
             "serif" => Family::Serif,
-            "sans-serif" | "sans serif" => Family::SansSerif,
+            "sans-serif" | "sans serif" => system_sans_serif(),
             "cursive" => Family::Cursive,
             "fantasy" => Family::Fantasy,
             "monospace" => Family::Monospace,
@@ -573,6 +574,16 @@ impl TextMeasurer {
     }
 }
 
+/// Matches libass's platform font provider for the generic sans-serif family.
+fn system_sans_serif() -> Family<'static> {
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    return Family::Name("Helvetica");
+    #[cfg(target_os = "windows")]
+    return Family::Name("Arial");
+    #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "windows")))]
+    Family::SansSerif
+}
+
 /// Keeps one soft indicator alive while it holds and glides across a lyric page.
 fn append_indicator(
     script: &mut String,
@@ -584,19 +595,19 @@ fn append_indicator(
 ) {
     let mut targets = Vec::new();
     for (slot, (line, line_end)) in page.iter().enumerate() {
-        let y = row_y(style, slot) as f64 + f64::from(style.font_size) * 0.48;
+        let y = row_y(style, slot) as f64 + f64::from(style.font_size) * 0.62;
         for (index, word) in line.words.iter().enumerate() {
             let start = word.start.max(display_start);
             if start >= *line_end || start >= display_end {
                 continue;
             }
-            if let Some((x, width)) = indicator_geometry(line, index, style, measurer) {
+            if let Some(x) = indicator_geometry(line, index, style, measurer) {
                 if targets.last().is_some_and(|target: &IndicatorTarget| {
                     centiseconds(target.start) == centiseconds(start)
                 }) {
                     targets.pop();
                 }
-                targets.push(IndicatorTarget { start, x, y, width });
+                targets.push(IndicatorTarget { start, x, y });
             }
         }
     }
@@ -658,7 +669,7 @@ fn indicator_geometry(
     target: usize,
     style: &Style,
     measurer: Option<&TextMeasurer>,
-) -> Option<(f64, f64)> {
+) -> Option<f64> {
     let mut remaining = line.text.as_str();
     let mut consumed = 0;
     for (index, word) in line.words.iter().enumerate() {
@@ -680,8 +691,8 @@ fn indicator_geometry(
             let line_width = measure(&line.text);
             let left = measure(&line.text[..start]);
             let right = measure(&line.text[..end]);
-            let x = f64::from(style.width) / 2.0 - line_width / 2.0 + (left + right) / 2.0;
-            return Some((x, ((right - left) * 0.72).max(14.0)));
+            let relative_center = (left + right - line_width) / 2.0;
+            return Some(f64::from(style.width) / 2.0 + relative_center * ASS_ADVANCE_SCALE);
         }
         consumed += word.text.len();
         remaining = &remaining[offset + word.text.len()..];
@@ -709,23 +720,16 @@ fn append_indicator_event(
             from.x, from.y, to.x, to.y
         )
     };
-    let duration_ms = centiseconds(end - start) * 10;
-    let resize = if (from.width - to.width).abs() < 0.01 {
-        String::new()
-    } else {
-        format!(r"\t(0,{duration_ms},0.7,\fscx{:.2})", to.width)
-    };
     let fade = match (fade_in, fade_out) {
         (true, true) => format!(r"\fad({INDICATOR_FADE_MS},{INDICATOR_FADE_MS})"),
         (true, false) => format!(r"\fad({INDICATOR_FADE_MS},0)"),
         (false, true) => format!(r"\fad(0,{INDICATOR_FADE_MS})"),
         (false, false) => String::new(),
     };
-    let height = (f64::from(style.font_size) / 18.0).clamp(3.0, 7.0);
+    let diameter = (f64::from(style.font_size) / 6.0).clamp(6.0, 12.0);
     let color = ass_color(&style.text_color);
     let drawing = format!(
-        r"{{\p1\bord1\shad0\blur3\1c{color}&\3c{color}&\1a&H55&\3a&H88&\fscx{:.2}\fscy{height:.2}{resize}{fade}}}{INDICATOR_PATH}",
-        from.width
+        r"{{\p1\bord1\shad0\blur3\1c{color}&\3c{color}&\1a&H55&\3a&H88&\fscx{diameter:.2}\fscy{diameter:.2}{fade}}}{INDICATOR_PATH}"
     );
     append_dialogue(script, start, end, "Plain", &format!("{position}{drawing}"));
 }
