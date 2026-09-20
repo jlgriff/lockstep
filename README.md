@@ -163,11 +163,12 @@ together, in order, and keeps every line visible until the page's final sung wor
 Then the whole page changes; upcoming pages never replace individual rows. Words ease into cyan
 over 80ms from their recorded onset and back to white before their end or the next onset.
 Both fades shorten for quick words. Completed and upcoming words remain white; internal
-pauses have no highlighted word. Words sharing a timing span still highlight together because
-the input does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
+pauses have no highlighted word. Leading and trailing punctuation stays white while the word
+itself changes color; internal apostrophes remain part of the word. Words sharing a timing span still highlight together because the input
+does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
 `--highlight-words false` disables all per-word color and animation while preserving the lyric
 pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
-which defaults to `true`. Notes appear below preview rows during instrumental gaps.
+which defaults to `true`. Notes appear centered only while no lyric page is visible.
 
 The palette and timing are design choices: strong text/background contrast follows
 [W3C readability guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),

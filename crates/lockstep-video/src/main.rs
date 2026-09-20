@@ -39,6 +39,7 @@ struct Args {
     #[arg(long, default_value_t = Style::default().font)]
     font: String,
 
+    /// Font size in video pixels
     #[arg(long, default_value_t = Style::default().font_size)]
     font_size: u32,
 

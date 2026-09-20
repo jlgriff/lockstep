@@ -177,6 +177,27 @@ fn untimed_trailing_punctuation_remains_plain_and_visible() {
     assert!(!lyric.ends_with(r"}—"), "{lyric}");
 }
 
+/// Keeps surrounding punctuation white while only the spoken word receives color animation.
+#[test]
+fn punctuation_is_excluded_from_word_highlighting() {
+    let document = Document {
+        version: 1,
+        duration: 2.0,
+        lines: vec![Line {
+            start: 0.0,
+            end: 2.0,
+            text: "(obey?), merchant's!".into(),
+            words: vec![word(0.0, 1.0, "(obey?),"), word(1.0, 2.0, "merchant's!")],
+        }],
+    };
+    let plan = plan(&document, &style()).unwrap();
+    let lyric = lyrics(&plan.subtitles)[0];
+    assert!(lyric.contains(r"{\rPlain}("), "{lyric}");
+    assert!(lyric.contains(r"}obey{\rPlain}?),"), "{lyric}");
+    assert!(lyric.contains("}merchant's{\\rPlain}!"), "{lyric}");
+    assert!(lyric.ends_with(r"{\rPlain}!"), "{lyric}");
+}
+
 /// Refuses future JSON versions before interpreting their timing schema.
 #[test]
 fn rejects_an_unsupported_lockstep_format_version() {
@@ -275,7 +296,7 @@ fn schedules_words_and_rests_without_extra_or_missing_events() {
                 "0:00:01.23",
                 "0:00:03.01",
                 "Lyrics",
-                r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One, {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two"
+                r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One{\rPlain}, {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two"
             ),
             ("0:00:03.01", "0:00:05.07", "Plain", "♪ ♫"),
             (
@@ -314,7 +335,7 @@ fn highlights_shared_spans_together_without_double_counting_time() {
     assert_eq!(
         lyrics(&plan.subtitles),
         [
-            r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One, {\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}— {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}!",
+            r"{\rPlain\1c&H0000CCFF&\t(369,370,\1c&H00FFEEDD&)}One{\rPlain}, {\rPlain}— {\rPlain\t(369,370,\1c&H0000CCFF&)\t(1779,1780,\1c&H00FFEEDD&)}two {\rPlain}!",
             r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Three {\rPlain\t(499,500,\1c&H0000CCFF&)\t(2229,2230,\1c&H00FFEEDD&)}four",
             r"{\rPlain\1c&H0000CCFF&\t(1119,1120,\1c&H00FFEEDD&)}Five",
         ]
@@ -417,7 +438,9 @@ fn previews_wait_until_word_onset_before_a_short_color_transition() {
     let plan = plan(&document(), &style).unwrap();
     let text = lyrics(&plan.subtitles);
     assert!(
-        text[0].contains(r"{\rPlain\t(0,120,0.5,\1c&H0000CCFF&)\t(250,370,2,\1c&H00FFEEDD&)}One,"),
+        text[0].contains(
+            r"{\rPlain\t(0,120,0.5,\1c&H0000CCFF&)\t(250,370,2,\1c&H00FFEEDD&)}One{\rPlain},"
+        ),
         "{}",
         text[0]
     );
@@ -593,7 +616,7 @@ fn consumes_lockstep_json_with_carried_and_spread_words() {
             "0:00:00.00",
             "0:00:01.50",
             "Lyrics",
-            r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Oui, {\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}— {\rPlain\t(499,500,\1c&H0000CCFF&)\t(1499,1500,\1c&H00FFEEDD&)}夜"
+            r"{\rPlain\1c&H0000CCFF&\t(499,500,\1c&H00FFEEDD&)}Oui{\rPlain}, {\rPlain}— {\rPlain\t(499,500,\1c&H0000CCFF&)\t(1499,1500,\1c&H00FFEEDD&)}夜"
         ),]
     );
 }
@@ -629,8 +652,8 @@ fn escapes_literal_lyric_braces_in_current_and_preview_text() {
     assert_eq!(
         lyrics(&plan.subtitles),
         [
-            r"{\rPlain\1c&H0000CCFF&\t(1779,1780,\1c&H00FFEEDD&)}\{Oui\},",
-            r"{\rPlain\t(3839,3840,\1c&H0000CCFF&)\t(6069,6070,\1c&H00FFEEDD&)}\{夜\}",
+            r"{\rPlain}\{{\rPlain\1c&H0000CCFF&\t(1779,1780,\1c&H00FFEEDD&)}Oui{\rPlain}\},",
+            r"{\rPlain}\{{\rPlain\t(3839,3840,\1c&H0000CCFF&)\t(6069,6070,\1c&H00FFEEDD&)}夜{\rPlain}\}",
             r"{\rPlain\1c&H0000CCFF&\t(1119,1120,\1c&H00FFEEDD&)}Five",
         ]
     );

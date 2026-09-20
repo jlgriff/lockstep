@@ -496,6 +496,13 @@ fn active_word_text(line: &Line, display_start: f64, event_end: f64, style: &Sty
             .min(event_end);
         let start = centiseconds(word.start).saturating_sub(centiseconds(display_start)) * 10;
         let end = centiseconds(end).saturating_sub(centiseconds(display_start)) * 10;
+        let (leading, spoken, trailing) = emphasis_parts(&word.text);
+        if !leading.is_empty() {
+            write!(text, r"{{\rPlain}}{}", escape_text(leading)).unwrap();
+        }
+        if spoken.is_empty() {
+            continue;
+        }
         text.push_str(r"{\rPlain");
         if end > start {
             let fade = u64::from(style.highlight_transition_ms).min((end - start) / 2);
@@ -516,10 +523,36 @@ fn active_word_text(line: &Line, display_start: f64, event_end: f64, style: &Sty
                 write!(text, r"\t({},{end},\1c{plain}&)", end - 1).unwrap();
             }
         }
-        write!(text, "}}{}", escape_text(&word.text)).unwrap();
+        write!(text, "}}{}", escape_text(spoken)).unwrap();
+        if !trailing.is_empty() {
+            write!(text, r"{{\rPlain}}{}", escape_text(trailing)).unwrap();
+        }
+    }
+    if remaining
+        .chars()
+        .any(|character| !character.is_whitespace())
+    {
+        text.push_str(r"{\rPlain}");
     }
     text.push_str(&escape_text(remaining));
     text
+}
+
+/// Splits one displayed token into plain edge punctuation around its highlightable word core.
+fn emphasis_parts(text: &str) -> (&str, &str, &str) {
+    let Some((start, _)) = text
+        .char_indices()
+        .find(|(_, character)| character.is_alphanumeric())
+    else {
+        return (text, "", "");
+    };
+    let end = text
+        .char_indices()
+        .rev()
+        .find(|(_, character)| character.is_alphanumeric())
+        .map(|(index, character)| index + character.len_utf8())
+        .unwrap();
+    (&text[..start], &text[start..end], &text[end..])
 }
 
 /// Writes one ASS dialogue row using absolute second endpoints.

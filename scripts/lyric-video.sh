@@ -6,6 +6,7 @@ if [[ ${1:-} == --help || $# -lt 2 ]]; then
     printf 'Creates AUDIO.lockstep.json and AUDIO lyric video.mp4. Pass -o to choose the video path.\n'
     printf 'Use --reuse-timings immediately after LYRICS to restyle without transcribing again.\n'
     printf 'Use --forced-align immediately after LYRICS for supplied-text alignment; run scripts/setup-alignment.sh first.\n'
+    printf 'Pass --font-size PIXELS among VIDEO_OPTIONS to resize the lyrics.\n'
     if [[ ${1:-} == --help ]]; then exit 0; else exit 1; fi
 fi
 
