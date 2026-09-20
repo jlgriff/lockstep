@@ -112,6 +112,35 @@ fn lyrics(script: &str) -> Vec<&str> {
         .collect()
 }
 
+/// Disables word effects while retaining exact text, page boundaries, and instrumental notes.
+#[test]
+fn disabling_highlights_preserves_plain_pages_and_rests() {
+    let mut style = Style {
+        line_count: 2,
+        ..style()
+    };
+    let highlighted = plan(&document(), &style).unwrap();
+    style.highlight_words = false;
+    let plain = plan(&document(), &style).unwrap();
+    let plain_events = events(&plain.subtitles);
+    assert!(plain_events.iter().all(|event| event.2 == "Plain"));
+    assert!(!plain.subtitles.contains(r"\t("));
+    assert_eq!(
+        plain_events.iter().map(|event| event.3).collect::<Vec<_>>(),
+        ["♪ ♫", "One, two", "♪ ♫", "Three four", "♪ ♫", "Five", "♪ ♫"]
+    );
+    assert_eq!(
+        plain_events
+            .iter()
+            .map(|event| (event.0, event.1))
+            .collect::<Vec<_>>(),
+        events(&highlighted.subtitles)
+            .iter()
+            .map(|event| (event.0, event.1))
+            .collect::<Vec<_>>()
+    );
+}
+
 /// Refuses future JSON versions before interpreting their timing schema.
 #[test]
 fn rejects_an_unsupported_lockstep_format_version() {
@@ -297,6 +326,48 @@ fn lyric_pages_change_together_after_their_last_line_finishes() {
         assert!(row["Text"].starts_with(expected), "{}", row["Text"]);
         assert!(!row["Text"].contains(r"\N"));
     }
+}
+
+/// Keeps the previous page's final word intact when the next page has an early display lead.
+#[test]
+fn preview_lead_cannot_cut_off_the_previous_page() {
+    let document = Document {
+        version: 1,
+        duration: 3.0,
+        lines: vec![
+            line(0.0, 1.0, vec![word(0.3, 1.0, "First")]),
+            line(0.7, 2.0, vec![word(1.0, 2.0, "Second")]),
+            line(1.7, 3.0, vec![word(2.0, 3.0, "Third")]),
+        ],
+    };
+    let style = Style {
+        line_count: 2,
+        highlight_transition_ms: 80,
+        ..style()
+    };
+    let plan = plan(&document, &style).unwrap();
+    let lyric_events = events(&plan.subtitles)
+        .into_iter()
+        .filter(|event| event.2 == "Lyrics")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lyric_events
+            .iter()
+            .map(|event| (event.0, event.1))
+            .collect::<Vec<_>>(),
+        [
+            ("0:00:00.00", "0:00:02.00"),
+            ("0:00:00.00", "0:00:02.00"),
+            ("0:00:02.00", "0:00:03.00"),
+        ]
+    );
+    assert!(
+        lyric_events[1]
+            .3
+            .contains(r"\t(1920,2000,2,\1c&H00FFEEDD&)"),
+        "{}",
+        lyric_events[1].3
+    );
 }
 
 /// Measures word effects from the preview event's start and finishes the fade promptly on held notes.

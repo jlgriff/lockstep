@@ -49,7 +49,7 @@ pub fn parse(text: &str) -> Vec<Line> {
             text: row.to_string(),
             tokens: row
                 .split_whitespace()
-                .flat_map(|word| word.split_inclusive(['—', '–']))
+                .flat_map(|word| word.split_inclusive(['—', '–', '-']))
                 .map(|raw| Token { raw: raw.to_string(), key: key(raw) })
                 .collect(),
         })

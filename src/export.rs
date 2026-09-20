@@ -40,15 +40,16 @@ fn lrc_time(seconds: f64) -> String {
     format!("{:02}:{:02}.{:02}", centis / 6000, centis / 100 % 60, centis % 100)
 }
 
-/// A line's words, each preceded by its own timestamp, optionally including the first.
-///
-/// Words timed together share one tag: a carried word deliberately takes its neighbour's time,
-/// and a repeated timestamp is invalid in both formats, which require them to strictly increase.
+/// Preserves lyric spacing and unique word timestamps, including onsets after a cue's preview.
 fn karaoke(line: &Line, stamp: impl Fn(f64) -> String, tag_first: bool) -> String {
     let mut out = String::new();
+    let mut remaining = line.text.as_str();
     let mut tagged: Option<f64> = None;
     for word in &line.words {
-        if !out.is_empty() {
+        if let Some(offset) = remaining.find(&word.text) {
+            out.push_str(&remaining[..offset]);
+            remaining = &remaining[offset + word.text.len()..];
+        } else if !out.is_empty() {
             out.push(' ');
         }
         let fresh = match tagged {
@@ -56,7 +57,7 @@ fn karaoke(line: &Line, stamp: impl Fn(f64) -> String, tag_first: bool) -> Strin
             None => true,
         };
         if fresh {
-            if tag_first || tagged.is_some() {
+            if tag_first || tagged.is_some() || word.start > line.start {
                 out.push_str(&format!("<{}>", stamp(word.start)));
             }
             tagged = Some(word.start);
@@ -152,6 +153,25 @@ mod tests {
         let vtt = render(&document(), Format::Vtt).unwrap();
         assert!(vtt.contains("\none <00:00:10.200>two\n"), "{vtt}");
         assert!(!vtt.contains("<00:00:09.700>one"), "{vtt}");
+    }
+
+    /// Tags the first word when its cue previews before the measured onset.
+    #[test]
+    fn vtt_preserves_a_first_word_onset_after_the_preview_starts() {
+        let mut document = document();
+        document.lines[0].start = 9.4;
+        let vtt = render(&document, Format::Vtt).unwrap();
+        assert!(vtt.contains("00:00:09.400 --> 00:00:11.200\n<00:00:09.700>one"), "{vtt}");
+    }
+
+    /// Preserves a compound's hyphen without inserting spaces around inline word timestamps.
+    #[test]
+    fn timed_exports_keep_hyphenated_word_spacing() {
+        let mut document = document();
+        document.lines[0].text = "one-two".into();
+        document.lines[0].words[0].text = "one-".into();
+        assert!(render(&document, Format::Vtt).unwrap().contains("one-<00:00:10.200>two"));
+        assert!(render(&document, Format::Lrc).unwrap().contains("one-<00:10.20>two"));
     }
 
     #[test]

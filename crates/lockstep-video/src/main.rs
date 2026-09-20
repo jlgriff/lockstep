@@ -45,6 +45,10 @@ struct Args {
     #[arg(long, default_value_t = Style::default().line_count)]
     lines: usize,
 
+    /// Enable per-word color and animation; false keeps every lyric in the text color
+    #[arg(long, action = clap::ArgAction::Set, default_value_t = Style::default().highlight_words)]
+    highlight_words: bool,
+
     /// Duration of each active-word fade in and out; zero switches instantly
     #[arg(long, default_value_t = Style::default().highlight_transition_ms)]
     highlight_transition_ms: u32,
@@ -83,6 +87,7 @@ fn main() -> Result<()> {
             font: args.font,
             font_size: args.font_size,
             line_count: args.lines,
+            highlight_words: args.highlight_words,
             highlight_transition_ms: args.highlight_transition_ms,
             rest_text: args.rest_text,
             background_images,

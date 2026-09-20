@@ -43,3 +43,27 @@ fn a_caller_can_reach_the_pieces_separately() {
     assert_eq!(lines[0].keys().collect::<Vec<_>>(), ["one", "two"]);
     assert_eq!(whisper::parse(&transcript()).unwrap().len(), 3);
 }
+
+/// Retains separate measured spans for a hyphenated lyric instead of copying the preceding word.
+#[test]
+fn hyphenated_lyrics_keep_their_spoken_words_and_full_duration() {
+    let lines = script::parse("grew honey-sweet;");
+    let heard = whisper::parse(r#"{"transcription":[{"tokens":[
+        {"text":" grew","t_dtw":7358},
+        {"text":" honey","t_dtw":7458},
+        {"text":" sweet","t_dtw":7504},
+        {"text":"?","t_dtw":7570},
+        {"text":" He","t_dtw":7574}
+    ]}]}"#).unwrap();
+    let (document, report) = build(&lines, &heard, Path::new("lyrics.txt"), 80.0).unwrap();
+    assert_eq!(report.matched, 3);
+    let line = &document.lines[0];
+    assert_eq!(line.text, "grew honey-sweet;");
+    assert_eq!(line.words.iter().map(|word| (word.text.as_str(), word.start, word.end)).collect::<Vec<_>>(), [
+        ("grew", 73.58, 74.58),
+        ("honey-", 74.58, 75.04),
+        ("sweet;", 75.04, 75.74),
+    ]);
+    assert!(line.words.iter().all(|word| word.source.is_none()));
+    assert_eq!(line.end, 75.74);
+}

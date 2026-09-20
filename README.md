@@ -6,8 +6,10 @@ Give it an audio file and the text that was spoken or sung in it. You get back J
 LRC saying when every word arrives — enough to drive a lyric video, a karaoke display, or a
 follow-along transcript for something that is not music at all.
 
-The words in the output always come from your script, never from the transcriber. A misheard
-word costs a little precision on that line rather than putting the wrong text on screen.
+The words in the output always come from your script, never from the transcriber. Missing or
+misheard words borrow neighboring timings, which can produce grouped highlights and inaccurate
+word boundaries. This pipeline matches text against a transcript; it does not yet force-align
+the supplied script against the audio. The lyrics are not passed to Whisper.
 
 A Rust library with a CLI on top. 3 MB binary, ~3 MB of memory however long the recording is.
 
@@ -50,7 +52,8 @@ subtitle file instead.
 
 **The script** is plain text, one line per line of output. Blank lines and whole-line bracketed
 labels such as `[Verse 1]` are dropped. Punctuation is kept in the output and ignored when
-matching; em and en dashes separate words, so `servant—whom` gets two timing anchors.
+matching; hyphens and dashes separate words, so `honey-sweet` and `servant—whom` each get
+two timing anchors while keeping their original punctuation on screen.
 
 ## Options
 
@@ -109,7 +112,9 @@ over 80ms from their recorded onset and back to white before their end or the ne
 Both fades shorten for quick words. Completed and upcoming words remain white; internal
 pauses have no highlighted word. Words sharing a timing span still highlight together because
 the input does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
-Notes appear below preview rows during instrumental gaps.
+`--highlight-words false` disables all per-word color and animation while preserving the lyric
+pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
+which defaults to `true`. Notes appear below preview rows during instrumental gaps.
 
 The palette and timing are design choices: strong text/background contrast follows
 [W3C readability guidance](https://www.w3.org/WAI/WCAG22/Understanding/contrast-minimum.html),
@@ -123,8 +128,15 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
   --lines 3 --rest-text '♪ ♫' --highlight-transition-ms 80
 ```
 
-One unqualified image fills the full video. Give every image a half-open timestamp range when
-using more than one; uncovered time keeps the background color.
+One image without timestamps stays for the whole video. Images fit inside the canvas, centered
+without cropping, with their aspect ratio preserved. `--background-color` fills the space around
+each image and any gaps in the image schedule. Give every image a half-open timestamp range when
+using more than one.
+
+```
+lockstep-video recording.json recording.mp3 -o recording.mp4 \
+  --background-image cover.jpg --background-color '#0B1730' --highlight-words false
+```
 
 ```
 lockstep-video recording.json recording.mp3 -o recording.mp4 \
@@ -143,13 +155,13 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
   "alignment": { "matched": 166, "words": 170, "rate": 0.98 },
   "lines": [
     {
-      "start": 12.0,
+      "start": 11.7,
       "end": 16.5,
-      "text": "The first line as it is printed",
+      "text": "The first line",
       "words": [
         { "start": 12.0, "end": 12.4, "text": "The" },
         { "start": 12.4, "end": 13.1, "text": "first" },
-        { "start": 13.1, "end": 16.5, "text": "line", "timing": "carried" }
+        { "start": 13.1, "end": 16.5, "text": "line" }
       ]
     }
   ]
@@ -159,11 +171,13 @@ lockstep-video recording.json recording.mp3 -o recording.mp4 \
 Times are seconds. `alignment.rate` is the share of your script the recording was heard to say —
 the number to gate on. `version` is there so a consumer can refuse a shape it does not know.
 
-A word's keys are a line's keys, meaning the same thing at either level. Words fill their line
-end to end, each running until the next begins.
+A line's `start` is its display time, up to 300ms before the first word. Word starts and ends
+retain their recorded timing; the display lead does not shift or shorten them. Words can have
+gaps, and a line's `end` includes its final word.
 
-**Silence is a gap, not an entry.** A pause is the space between one line's `end` and the next
-line's `start`; the run-out is between the last line's `end` and `duration`.
+**Silence is a gap, not an entry.** Use word spans for sung intervals; a later line's preview
+can start before the preceding line finishes singing. The run-out is between the last line's
+`end` and `duration`.
 
 `timing` says how a word got its time, and appears **only when that time was not measured**:
 
@@ -182,12 +196,12 @@ word's end. Whisper still estimates timing, and words marked `carried` or `sprea
 ```
 WEBVTT
 
-00:00:12.000 --> 00:00:16.500
-The <00:00:12.400>first <00:00:13.100>line
+00:00:11.700 --> 00:00:16.500
+<00:00:12.000>The <00:00:12.400>first <00:00:13.100>line
 ```
 
 ```
-[00:12.00]<00:12.00>The <00:12.40>first <00:13.10>line
+[00:11.70]<00:12.00>The <00:12.40>first <00:13.10>line
 ```
 
 Both carry the word times but not `timing`, so use JSON if you need to know which words were
@@ -231,10 +245,10 @@ Both are found automatically, so the usual install needs no flags:
 | binary | `--whisper`, `$LOCKSTEP_WHISPER`, then `whisper-cli` / `whisper-cpp` / `whisper` on `PATH` |
 | model | `--model`, `$LOCKSTEP_MODEL`, then `./models`, `~/.cache/whisper`, `~/.local/share/whisper`, `~/Library/Application Support/whisper`, `{/opt/homebrew,/usr/local,/usr}/share/whisper.cpp/models` |
 
-When several models are installed, **base is preferred over a bigger one**. That is deliberate:
-whisper only supplies the clock here, so a weaker model costs borrowed timestamps rather than
-wrong ones. `base.en` agreed with `small.en` to within lockstep's own tenth-of-a-second
-precision while using a third of the memory and running twice as fast.
+When several models are installed, **base is preferred over a bigger one** for speed.
+Recognition errors become borrowed timestamps, which can be early or too short.
+`--model` selects a larger installed model for difficult recordings; it does not guarantee
+accurate lyrics or timing.
 
 The `-dtw` preset is read from the model's filename, so `ggml-large-v3.bin` selects `large.v3`
 by itself. A name implying no preset it knows is refused up front rather than failing several

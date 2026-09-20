@@ -20,14 +20,16 @@ structured in `BackgroundCue`; they are not interpolated into a filter expressio
 All library times are seconds relative to track start. Display and image ranges are
 half-open: start included, end excluded. Adjacent ranges do not overlap.
 Track duration must be finite and positive. Use the supplied timestamps without
-adding a lead offset; Lockstep already accounts for its own display lead.
+adding a lead offset. A line can preview before its first word; word timestamps carry
+the actual highlight interval independently of that preview.
 
 `line_count` counts source lines per page. Consecutive groups of that size appear together
-in reading order at the first line's onset and stay until the last line's end. All rows
+in reading order at the first line's display start and stay until the last line's end. All rows
 share the page's display interval; completed lines remain visible in plain text. No line
 from the next page appears early. The final incomplete page uses the same fixed row positions.
-Each source line has one ASS event with an explicit `\pos`. A new lyric's start truncates
-an overlapping older sung span without removing its text mid-page; zero-length spans are
+Each source line has one ASS event with an explicit `\pos`. The next line's first word,
+not its preview start, truncates overlapping sung spans. A page's preview waits until the
+previous page ends, so it cannot interrupt the previous final word. Zero-length spans are
 skipped before grouping. Gaps between sung spans show notes below the page's fixed rows.
 
 Only the active word is highlighted. The default is soft cyan (`#67E8F9`) over navy, with
@@ -38,6 +40,9 @@ Empty spans stay plain. Held words retain the accent until their closing fade; g
 no active highlight. Words sharing an onset can highlight together because the source
 does not distinguish them. Times are absolute offsets from the event's preview start;
 gaps cannot accumulate timing drift. Glyph positions and original punctuation spacing stay fixed.
+`highlight_words` defaults to `true`. Setting it to `false` uses the exact original line text
+and the `Plain` style without word transforms; page timing, fixed rows, and rests stay the same.
+The CLI accepts `--highlight-words true|false` independently of transition duration and palette.
 
 ASS is the rendering interchange format. Generate one dialogue event per lyric or rest,
 not one event per video frame or word. Use two styles:
@@ -64,6 +69,9 @@ by start time and checking adjacent entries for overlap. This covers partial and
 contained overlaps in any input order without an all-pairs comparison. Return
 sorted cues with required `TimeRange` values; gaps retain the background color.
 Do not round image endpoints to ASS precision or clamp invalid inputs.
+Fit each entire image inside the canvas with its aspect ratio preserved, then center it over
+the color source. Never crop to fill. The configured background color remains visible around
+images whose aspect ratio differs from the canvas, as well as through transparency.
 
 Repeat the CLI flag for multiple images:
 
@@ -95,10 +103,11 @@ cargo test --workspace --no-fail-fast
 
 The contract suite verifies timing, styling, validation, image schedules, and ASS events
 without requiring a renderer. The optional `tests/render.rs` suite encodes short fixtures
-using FFmpeg/libass and Arial, then checks stable row positions and highlight transitions
+using FFmpeg/libass and Arial, then checks stable row positions, highlight transitions,
+the CLI highlight toggle, image fitting, and the background color around images
 in decoded frames. Run it with `cargo test -p lockstep-video --test render -- --ignored`,
-setting `LOCKSTEP_VIDEO_FFMPEG` if FFmpeg is not on PATH. Image fitting uses center-cropped
-cover scaling. Long-line layout, font fallback, literal backslashes, and audio-duration
+setting `LOCKSTEP_VIDEO_FFMPEG` if FFmpeg is not on PATH. Long-line layout, font fallback,
+literal backslashes, and audio-duration
 mismatches remain dependent on libass and FFmpeg behavior.
 
 `scripts/setup-video.sh` installs macOS dependencies and a persistent model once.

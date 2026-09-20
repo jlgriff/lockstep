@@ -70,6 +70,7 @@ pub struct Style {
     pub font: String,
     pub font_size: u32,
     pub line_count: usize,
+    pub highlight_words: bool,
     pub highlight_transition_ms: u32,
     pub rest_text: String,
     pub background_images: Vec<BackgroundImage>,
@@ -88,6 +89,7 @@ impl Default for Style {
             font: "sans-serif".to_string(),
             font_size: 72,
             line_count: 2,
+            highlight_words: true,
             highlight_transition_ms: 80,
             rest_text: "♪ ♪ ♪".to_string(),
             background_images: Vec::new(),
@@ -420,20 +422,21 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
             let end = line.end.min(
                 lines
                     .get(index + 1)
-                    .map_or(document.duration, |next| next.start),
+                    .map_or(document.duration, |next| line_onset(next)),
             );
             (end > line.start).then_some((*line, end))
         })
         .collect::<Vec<_>>();
     let mut cursor = 0.0;
     for page in windows.chunks(style.line_count) {
-        let display_start = page[0].0.start;
+        let display_start = page[0].0.start.max(cursor);
         let display_end = page.last().unwrap().1;
         for (slot, (line, end)) in page.iter().enumerate() {
-            if line.start > cursor {
-                append_rest(script, cursor, line.start, style);
+            let onset = line_onset(line);
+            if onset > cursor {
+                append_rest(script, cursor, onset, style);
             }
-            let (event_style, body) = if line.words.is_empty() {
+            let (event_style, body) = if !style.highlight_words || line.words.is_empty() {
                 ("Plain", escape_text(&line.text))
             } else {
                 ("Lyrics", active_word_text(line, display_start, *end, style))
@@ -447,6 +450,11 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
     if cursor < document.duration {
         append_rest(script, cursor, document.duration, style);
     }
+}
+
+/// Distinguishes a line's first sung word from its optional earlier display start.
+fn line_onset(line: &Line) -> f64 {
+    line.words.first().map_or(line.start, |word| word.start)
 }
 
 /// Centers fixed lyric slots without recentering when another slot becomes empty.
@@ -664,11 +672,11 @@ fn filter_graph(request: &RenderRequest, plan: &RenderPlan, subtitle_path: &Path
         let scaled = format!("image{index}");
         let overlaid = format!("background{index}");
         filters.push(format!(
-            "[{input}:v]scale={}:{}:force_original_aspect_ratio=increase,crop={}:{},setsar=1[{scaled}]",
-            request.style.width, request.style.height, request.style.width, request.style.height
+            "[{input}:v]scale={}:{}:force_original_aspect_ratio=decrease,setsar=1[{scaled}]",
+            request.style.width, request.style.height
         ));
         filters.push(format!(
-            "[{base}][{scaled}]overlay=0:0:enable='gte(t,{})*lt(t,{})'[{overlaid}]",
+            "[{base}][{scaled}]overlay=(W-w)/2:(H-h)/2:enable='gte(t,{})*lt(t,{})'[{overlaid}]",
             cue.range.start, cue.range.end
         ));
         base = overlaid;

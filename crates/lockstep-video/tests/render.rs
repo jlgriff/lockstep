@@ -1,4 +1,4 @@
-use lockstep_video::{render, RenderRequest, Style};
+use lockstep_video::{render, BackgroundImage, RenderRequest, Style, TimeRange};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -8,6 +8,14 @@ const COMPRESSION_RESIDUE_PIXELS: usize = 5;
 struct Fixture(PathBuf);
 
 impl Fixture {
+    /// Creates a test-specific directory for temporary media assets.
+    fn directory(name: &str) -> Self {
+        let dir =
+            std::env::temp_dir().join(format!("lockstep-video-{name}-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        Self(dir)
+    }
+
     /// Encodes two successive lines with a preview and a held first word.
     fn new(name: &str) -> Self {
         Self::with_lyrics(
@@ -26,10 +34,7 @@ impl Fixture {
 
     /// Renders supplied timings with fixed frame geometry for pixel comparisons.
     fn with_lyrics(name: &str, json: &str, style: Style) -> Self {
-        let dir =
-            std::env::temp_dir().join(format!("lockstep-video-{name}-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let fixture = Self(dir);
+        let fixture = Self::directory(name);
         let timings = fixture.0.join("lyrics.json");
         let audio = fixture.0.join("audio.wav");
         std::fs::write(&timings, json).unwrap();
@@ -275,4 +280,125 @@ fn only_the_current_word_is_highlighted_without_animation() {
             ..Style::default()
         },
     );
+}
+
+/// Generates an image with contrasting edges so cropping is visible in the encoded result.
+fn bordered_image(assets: &Fixture, name: &str, width: usize, height: usize) -> PathBuf {
+    let path = assets.0.join(name);
+    let mut ppm = format!("P6\n{width} {height}\n255\n").into_bytes();
+    for y in 0..height {
+        for x in 0..width {
+            let border = x < 4 || y < 4 || x >= width - 4 || y >= height - 4;
+            ppm.extend_from_slice(if border { &[255, 0, 0] } else { &[0, 255, 0] });
+        }
+    }
+    std::fs::write(&path, ppm).unwrap();
+    path
+}
+
+/// Compares a decoded pixel with tolerance for video color conversion and compression.
+fn assert_pixel(frame: &[u8], x: usize, y: usize, expected: [u8; 3]) {
+    let offset = (y * 640 + x) * 3;
+    let actual = &frame[offset..offset + 3];
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(actual, expected)| actual.abs_diff(expected) < 10),
+        "pixel ({x}, {y}): expected {expected:?}, got {actual:?}"
+    );
+}
+
+/// Fits portrait and wide images intact over the selected color, including scheduled gaps.
+#[test]
+#[ignore = "requires FFmpeg with libass"]
+fn background_images_fit_inside_the_canvas_and_keep_the_color_frame() {
+    let assets = Fixture::directory("background-assets");
+    let portrait = bordered_image(&assets, "portrait.ppm", 24, 48);
+    let wide = bordered_image(&assets, "wide.ppm", 96, 24);
+    let fixture = Fixture::with_lyrics(
+        "contained-backgrounds",
+        r#"{"version":1,"duration":3,"lines":[]}"#,
+        Style {
+            background_color: "#123456".into(),
+            rest_text: String::new(),
+            background_images: vec![
+                BackgroundImage {
+                    path: portrait,
+                    range: Some(TimeRange {
+                        start: 0.0,
+                        end: 1.0,
+                    }),
+                },
+                BackgroundImage {
+                    path: wide,
+                    range: Some(TimeRange {
+                        start: 2.0,
+                        end: 3.0,
+                    }),
+                },
+            ],
+            ..Style::default()
+        },
+    );
+    let portrait = fixture.frame("0.5");
+    for x in [100, 540] {
+        assert_pixel(&portrait, x, 180, [18, 52, 86]);
+    }
+    for x in [240, 400] {
+        assert_pixel(&portrait, x, 180, [255, 0, 0]);
+    }
+    assert_pixel(&portrait, 320, 180, [0, 255, 0]);
+    let wide = fixture.frame("2.5");
+    for y in [40, 320] {
+        assert_pixel(&wide, 320, y, [18, 52, 86]);
+    }
+    for x in [10, 630] {
+        assert_pixel(&wide, x, 180, [255, 0, 0]);
+    }
+    assert_pixel(&wide, 320, 180, [0, 255, 0]);
+    assert_pixel(&fixture.frame("1.5"), 320, 180, [18, 52, 86]);
+}
+
+/// Exercises the boolean CLI flag through encoded pixels while checking lyrics remain visible.
+#[test]
+#[ignore = "requires FFmpeg with libass and Arial"]
+fn cli_can_disable_all_word_highlighting() {
+    let fixture = Fixture::new("disabled-highlights");
+    let result = Command::new(env!("CARGO_BIN_EXE_lockstep-video"))
+        .arg(fixture.0.join("lyrics.json"))
+        .arg(fixture.0.join("audio.wav"))
+        .arg("--output")
+        .arg(fixture.0.join("video.mp4"))
+        .args([
+            "--highlight-words",
+            "false",
+            "--width",
+            "640",
+            "--height",
+            "360",
+            "--font",
+            "Arial",
+            "--font-size",
+            "36",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        result.status.success(),
+        "{}",
+        String::from_utf8_lossy(&result.stderr)
+    );
+    for time in ["0.9", "1.9"] {
+        let frame = fixture.frame(time);
+        for right in [false, true] {
+            let count = highlighted_pixels(&frame, right);
+            assert!(
+                count <= COMPRESSION_RESIDUE_PIXELS,
+                "word highlighting is disabled: {count} colored pixels at {time}s"
+            );
+        }
+        assert!(row_width(&frame, false) > 20);
+        assert!(row_width(&frame, true) > 20);
+    }
 }
