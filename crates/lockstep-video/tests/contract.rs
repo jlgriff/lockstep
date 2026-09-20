@@ -316,6 +316,24 @@ fn overlapping_source_lines_do_not_stack_display_windows() {
     assert!(events[1].3.ends_with("Second"), "{events:?}");
 }
 
+/// Lets the last line at a shared start replace earlier zero-window lines without duplicating the preceding rest.
+#[test]
+fn equal_source_line_starts_emit_one_rest_and_one_display_window() {
+    let mut document = document();
+    document.lines = vec![
+        line(1.0, 2.0, vec![word(1.0, 2.0, "Replaced")]),
+        line(1.0, 10.37, vec![word(1.0, 10.37, "Visible")]),
+    ];
+    let plan = plan(&document, &style()).unwrap();
+    assert_eq!(
+        events(&plan.subtitles),
+        [
+            ("0:00:00.00", "0:00:01.00", "Plain", "♪ ♫"),
+            ("0:00:01.00", "0:00:10.37", "Lyrics", r"{\k937}Visible"),
+        ]
+    );
+}
+
 /// Ignores empty spans produced by alignment rather than emitting invalid ASS events.
 #[test]
 fn zero_length_source_lines_do_not_interrupt_rests() {

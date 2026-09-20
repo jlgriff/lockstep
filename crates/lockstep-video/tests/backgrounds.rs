@@ -259,6 +259,11 @@ invalid_cli_image!(
     "timestamp"
 );
 invalid_cli_image!(
+    rejects_ranges_without_image_delimiters,
+    "00:00:00.000..00:00:01.000",
+    "timestamp"
+);
+invalid_cli_image!(
     rejects_frame_based_timecodes,
     "00:00:00:12..00:00:01:12=x.jpg",
     "timestamp"

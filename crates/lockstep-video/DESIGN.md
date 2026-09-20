@@ -1,7 +1,7 @@
 # Lyric-video contract
 
-This crate contains failing contracts and API/CLI scaffolding. Planning, image-spec
-parsing, validation, and video encoding are not implemented.
+This crate implements lyric-video planning, image-spec parsing, validation, and FFmpeg
+encoding behind its own library and minimal CLI.
 
 ## Boundaries
 
@@ -14,7 +14,6 @@ Lockstep can omit `words`; those lines display as plain text without invented ti
 Its color source remains beneath images, including during gaps. Image paths stay
 structured in `BackgroundCue`; they are not interpolated into a filter expression.
 `render` owns file I/O and FFmpeg invocation. CLI defaults come from `Style::default`.
-The planner stub returns an error, never a successful empty artifact.
 
 ## Time and display
 
@@ -89,12 +88,12 @@ panic does not hide later cases. No rendering dependency is needed for these tes
 cargo test --workspace --no-fail-fast
 ```
 
-Video tests intentionally fail until implementation. Before calling the encoder
-complete, add a small rendered fixture that verifies audio, duration, image changes,
-text colors, and preview behavior using FFmpeg/ffprobe and a fixed test font. Image
-fitting, long-line layout, font fallback, literal backslashes, and audio-duration
-mismatches still need renderer-level decisions and verification; string contracts
-do not establish pixel correctness.
+The contract suite verifies timing, styling, validation, image schedules, and the complete
+ASS event sequence without requiring a rendering dependency. Pixel-level verification still
+needs an FFmpeg build with libass plus a fixed test font and should cover audio, duration,
+image changes, text colors, and preview behavior. Image fitting uses center-cropped cover
+scaling. Long-line layout, font fallback, literal backslashes, and audio-duration mismatches
+remain dependent on libass and FFmpeg behavior.
 
 FFmpeg must include the libass-backed `ass` filter; some FFmpeg builds omit it.
 Check filter availability explicitly and report a useful error. See

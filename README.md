@@ -64,6 +64,37 @@ the aligner.
 | `--dtw` | alignment-heads preset, if the model's filename does not imply one |
 | `--keep` | keep the intermediate WAV and transcript, and say where |
 
+## Lyric videos
+
+`lockstep-video` is a separate workspace crate. It reads Lockstep JSON, writes timed ASS
+karaoke subtitles, and asks FFmpeg to encode them with the original audio. FFmpeg must include
+the libass-backed `ass` filter.
+
+```
+cargo build --release -p lockstep-video
+target/release/lockstep-video recording.json recording.mp3 -o recording.mp4
+```
+
+Its defaults are a black 1920x1080 canvas, white 72-pixel sans-serif text, a gold current-word
+highlight, two displayed lines, and 30 frames per second. Every value is configurable:
+
+```
+lockstep-video recording.json recording.mp3 -o recording.mp4 \
+  --width 1280 --height 720 --frames-per-second 24 \
+  --background-color '#112233' --text-color '#DDEEFF' \
+  --highlight-color '#FFCC00' --font 'Avenir Next' --font-size 64 \
+  --lines 3 --rest-text '♪ ♫'
+```
+
+One unqualified image fills the full video. Give every image a half-open timestamp range when
+using more than one; uncovered time keeps the background color.
+
+```
+lockstep-video recording.json recording.mp3 -o recording.mp4 \
+  --background-image '00:00:00.000..00:00:12.500=intro.jpg' \
+  --background-image '00:00:12.500..00:01:03.000=verse.jpg'
+```
+
 ## Output
 
 ```json
