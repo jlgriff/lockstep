@@ -198,27 +198,39 @@ fn punctuation_is_excluded_from_word_highlighting() {
     assert!(lyric.ends_with(r"{\rPlain}!"), "{lyric}");
 }
 
-/// Uses a quiet underline without applying the configured highlight color to lyric glyphs.
+/// Keeps one indicator present and moves it between words instead of blinking decorations.
 #[test]
-fn underline_style_marks_only_the_current_word_without_recoloring_text() {
+fn underline_style_uses_a_continuous_moving_pill() {
+    let mut document = document();
+    document.lines.truncate(2);
     let style = Style {
         highlight_style: HighlightStyle::Underline,
+        line_count: 2,
         ..style()
     };
-    let subtitles = plan(&document(), &style).unwrap().subtitles;
+    let subtitles = plan(&document, &style).unwrap().subtitles;
     let events = events(&subtitles);
     let event_text = events.iter().map(|event| event.3).collect::<String>();
-    assert!(event_text.contains(r"\u1"), "{event_text}");
+    assert!(!event_text.contains(r"\u1"), "{event_text}");
     assert!(!event_text.contains("&H0000CCFF"), "{event_text}");
-    let underlines = events
+    let indicators = events
         .iter()
-        .filter(|event| event.3.contains(r"\u1"))
+        .filter(|event| event.3.contains(r"\p1"))
         .collect::<Vec<_>>();
-    assert_eq!(
-        (underlines[0].0, underlines[0].1),
-        ("0:00:01.23", "0:00:01.60")
+    assert!(
+        indicators.iter().any(|event| event.3.contains(r"\move(")),
+        "{indicators:?}"
     );
-    assert!(underlines[0].3.contains(r"\u1}One{\u0\alpha&HFF&},"));
+    assert!(
+        indicators.windows(2).all(|pair| pair[0].1 == pair[1].0),
+        "indicator timeline has a gap: {indicators:?}"
+    );
+    assert_eq!(
+        (indicators.first().unwrap().0, indicators.last().unwrap().1),
+        ("0:00:01.23", "0:00:07.30")
+    );
+    assert!(indicators.first().unwrap().3.contains(r"\fad(120,0)"));
+    assert!(indicators.last().unwrap().3.contains(r"\fad(0,120)"));
 }
 
 /// Refuses future JSON versions before interpreting their timing schema.

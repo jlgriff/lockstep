@@ -1,6 +1,8 @@
 //! Plans and renders lyric videos from Lockstep timing documents.
 
 use anyhow::{bail, Context, Result};
+use fontdb::{Database, Family, Query};
+use rustybuzz::{shape, Face, UnicodeBuffer};
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs;
@@ -409,7 +411,10 @@ fn build_subtitles(document: &Document, style: &Style) -> String {
         "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
     )
     .unwrap();
-    append_events(&mut script, document, style);
+    let measurer = (style.highlight_words && style.highlight_style == HighlightStyle::Underline)
+        .then(|| TextMeasurer::load(&style.font, style.font_size))
+        .flatten();
+    append_events(&mut script, document, style, measurer.as_ref());
     script
 }
 
@@ -419,7 +424,12 @@ fn ass_color(color: &str) -> String {
 }
 
 /// Holds complete lyric pages through their final sung line and shows notes during rests.
-fn append_events(script: &mut String, document: &Document, style: &Style) {
+fn append_events(
+    script: &mut String,
+    document: &Document,
+    style: &Style,
+    measurer: Option<&TextMeasurer>,
+) {
     let lines = document
         .lines
         .iter()
@@ -456,9 +466,9 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
             };
             let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
             append_dialogue(script, display_start, display_end, event_style, &text);
-            if style.highlight_words && style.highlight_style == HighlightStyle::Underline {
-                append_underlines(script, line, display_start, *end, y, style);
-            }
+        }
+        if style.highlight_words && style.highlight_style == HighlightStyle::Underline {
+            append_indicator(script, page, display_start, display_end, style, measurer);
         }
         cursor = display_end;
     }
@@ -489,59 +499,249 @@ fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
     append_dialogue(script, start, end, "Plain", &text);
 }
 
-/// Overlays a thin underline during each spoken word without recoloring the base lyric text.
-fn append_underlines(
-    script: &mut String,
-    line: &Line,
-    display_start: f64,
-    event_end: f64,
-    y: i64,
-    style: &Style,
-) {
-    for (index, word) in line.words.iter().enumerate() {
-        let start = word.start.max(display_start);
-        let end = word
-            .end
-            .min(
-                line.words
-                    .iter()
-                    .skip(index + 1)
-                    .find(|next| next.start > word.start)
-                    .map_or(event_end, |next| next.start),
-            )
-            .min(event_end);
-        if end <= start || emphasis_parts(&word.text).1.is_empty() {
-            continue;
-        }
-        let body = underline_word_text(line, index);
-        let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
-        append_dialogue(script, start, end, "Plain", &text);
+#[derive(Clone, Copy, Debug)]
+struct IndicatorTarget {
+    start: f64,
+    x: f64,
+    y: f64,
+    width: f64,
+}
+
+const INDICATOR_FADE_MS: u32 = 120;
+const INDICATOR_TRAVEL_MS: u32 = 160;
+const INDICATOR_PATH: &str =
+    "m 0 50 b 0 22 22 0 50 0 b 78 0 100 22 100 50 b 100 78 78 100 50 100 b 22 100 0 78 0 50";
+
+/// Measures shaped text with the selected system font for proportional indicator placement.
+struct TextMeasurer {
+    data: Vec<u8>,
+    face_index: u32,
+    font_size: f64,
+}
+
+impl TextMeasurer {
+    /// Loads the requested face, falling back to the system sans-serif face.
+    fn load(font: &str, font_size: u32) -> Option<Self> {
+        let mut database = Database::new();
+        database.load_system_fonts();
+        let requested = match font.to_ascii_lowercase().as_str() {
+            "serif" => Family::Serif,
+            "sans-serif" | "sans serif" => Family::SansSerif,
+            "cursive" => Family::Cursive,
+            "fantasy" => Family::Fantasy,
+            "monospace" => Family::Monospace,
+            _ => Family::Name(font),
+        };
+        let requested_families = [requested];
+        let fallback_families = [Family::SansSerif];
+        let id = database
+            .query(&Query {
+                families: &requested_families,
+                ..Query::default()
+            })
+            .or_else(|| {
+                database.query(&Query {
+                    families: &fallback_families,
+                    ..Query::default()
+                })
+            })
+            .or_else(|| database.faces().next().map(|face| face.id))?;
+        let (data, face_index) =
+            database.with_face_data(id, |data, face_index| (data.to_vec(), face_index))?;
+        Some(Self {
+            data,
+            face_index,
+            font_size: f64::from(font_size),
+        })
+    }
+
+    /// Returns the horizontal shaped advance in video pixels.
+    fn width(&self, text: &str) -> f64 {
+        let Some(face) = Face::from_slice(&self.data, self.face_index) else {
+            return estimated_text_width(text, self.font_size);
+        };
+        let units_per_em = f64::from(face.units_per_em());
+        let mut buffer = UnicodeBuffer::new();
+        buffer.push_str(text);
+        let glyphs = shape(&face, &[], buffer);
+        let units = glyphs
+            .glyph_positions()
+            .iter()
+            .map(|position| f64::from(position.x_advance))
+            .sum::<f64>();
+        units * self.font_size / units_per_em
     }
 }
 
-/// Makes one word core visible and underlined while retaining transparent text for layout.
-fn underline_word_text(line: &Line, target: usize) -> String {
-    let mut text = String::from(r"{\alpha&HFF&}");
-    let mut remaining = line.text.as_str();
-    for (index, word) in line.words.iter().enumerate() {
-        if let Some(offset) = remaining.find(&word.text) {
-            text.push_str(&escape_text(&remaining[..offset]));
-            remaining = &remaining[offset + word.text.len()..];
-        } else if index > 0 {
-            text.push(' ');
-        }
-        if index == target {
-            let (leading, spoken, trailing) = emphasis_parts(&word.text);
-            text.push_str(&escape_text(leading));
-            write!(text, r"{{\alpha&H00&\u1}}{}", escape_text(spoken)).unwrap();
-            text.push_str(r"{\u0\alpha&HFF&}");
-            text.push_str(&escape_text(trailing));
-        } else {
-            text.push_str(&escape_text(&word.text));
+/// Keeps one soft indicator alive while it holds and glides across a lyric page.
+fn append_indicator(
+    script: &mut String,
+    page: &[(&Line, f64)],
+    display_start: f64,
+    display_end: f64,
+    style: &Style,
+    measurer: Option<&TextMeasurer>,
+) {
+    let mut targets = Vec::new();
+    for (slot, (line, line_end)) in page.iter().enumerate() {
+        let y = row_y(style, slot) as f64 + f64::from(style.font_size) * 0.48;
+        for (index, word) in line.words.iter().enumerate() {
+            let start = word.start.max(display_start);
+            if start >= *line_end || start >= display_end {
+                continue;
+            }
+            if let Some((x, width)) = indicator_geometry(line, index, style, measurer) {
+                if targets.last().is_some_and(|target: &IndicatorTarget| {
+                    centiseconds(target.start) == centiseconds(start)
+                }) {
+                    targets.pop();
+                }
+                targets.push(IndicatorTarget { start, x, y, width });
+            }
         }
     }
-    text.push_str(&escape_text(remaining));
-    text
+    let Some(first_target) = targets.first().copied() else {
+        return;
+    };
+    let mut cursor = first_target.start;
+    let mut current = first_target;
+    let mut first_event = true;
+    for next in targets.iter().copied().skip(1) {
+        let travel = f64::from(INDICATOR_TRAVEL_MS) / 1_000.0;
+        let move_start = (next.start - travel).max(cursor);
+        if move_start > cursor {
+            append_indicator_event(
+                script,
+                cursor,
+                move_start,
+                current,
+                current,
+                first_event,
+                false,
+                style,
+            );
+            first_event = false;
+        }
+        if next.start > move_start {
+            append_indicator_event(
+                script,
+                move_start,
+                next.start,
+                current,
+                next,
+                first_event,
+                false,
+                style,
+            );
+            first_event = false;
+        }
+        cursor = next.start;
+        current = next;
+    }
+    if display_end > cursor {
+        append_indicator_event(
+            script,
+            cursor,
+            display_end,
+            current,
+            current,
+            first_event,
+            true,
+            style,
+        );
+    }
+}
+
+/// Locates one spoken word inside its centered proportional lyric line.
+fn indicator_geometry(
+    line: &Line,
+    target: usize,
+    style: &Style,
+    measurer: Option<&TextMeasurer>,
+) -> Option<(f64, f64)> {
+    let mut remaining = line.text.as_str();
+    let mut consumed = 0;
+    for (index, word) in line.words.iter().enumerate() {
+        let offset = remaining.find(&word.text)?;
+        consumed += offset;
+        if index == target {
+            let (leading, spoken, _) = emphasis_parts(&word.text);
+            if spoken.is_empty() {
+                return None;
+            }
+            let start = consumed + leading.len();
+            let end = start + spoken.len();
+            let measure = |text: &str| {
+                measurer.map_or_else(
+                    || estimated_text_width(text, f64::from(style.font_size)),
+                    |measurer| measurer.width(text),
+                )
+            };
+            let line_width = measure(&line.text);
+            let left = measure(&line.text[..start]);
+            let right = measure(&line.text[..end]);
+            let x = f64::from(style.width) / 2.0 - line_width / 2.0 + (left + right) / 2.0;
+            return Some((x, ((right - left) * 0.72).max(14.0)));
+        }
+        consumed += word.text.len();
+        remaining = &remaining[offset + word.text.len()..];
+    }
+    None
+}
+
+/// Draws one hold or glide segment with optional page-edge fades.
+#[allow(clippy::too_many_arguments)]
+fn append_indicator_event(
+    script: &mut String,
+    start: f64,
+    end: f64,
+    from: IndicatorTarget,
+    to: IndicatorTarget,
+    fade_in: bool,
+    fade_out: bool,
+    style: &Style,
+) {
+    let position = if (from.x - to.x).abs() < 0.01 && (from.y - to.y).abs() < 0.01 {
+        format!(r"{{\an5\pos({:.2},{:.2})}}", from.x, from.y)
+    } else {
+        format!(
+            r"{{\an5\move({:.2},{:.2},{:.2},{:.2})}}",
+            from.x, from.y, to.x, to.y
+        )
+    };
+    let duration_ms = centiseconds(end - start) * 10;
+    let resize = if (from.width - to.width).abs() < 0.01 {
+        String::new()
+    } else {
+        format!(r"\t(0,{duration_ms},0.7,\fscx{:.2})", to.width)
+    };
+    let fade = match (fade_in, fade_out) {
+        (true, true) => format!(r"\fad({INDICATOR_FADE_MS},{INDICATOR_FADE_MS})"),
+        (true, false) => format!(r"\fad({INDICATOR_FADE_MS},0)"),
+        (false, true) => format!(r"\fad(0,{INDICATOR_FADE_MS})"),
+        (false, false) => String::new(),
+    };
+    let height = (f64::from(style.font_size) / 18.0).clamp(3.0, 7.0);
+    let color = ass_color(&style.text_color);
+    let drawing = format!(
+        r"{{\p1\bord1\shad0\blur3\1c{color}&\3c{color}&\1a&H55&\3a&H88&\fscx{:.2}\fscy{height:.2}{resize}{fade}}}{INDICATOR_PATH}",
+        from.width
+    );
+    append_dialogue(script, start, end, "Plain", &format!("{position}{drawing}"));
+}
+
+/// Estimates proportional width when the requested system font cannot be loaded.
+fn estimated_text_width(text: &str, font_size: f64) -> f64 {
+    text.chars()
+        .map(|character| match character {
+            ' ' | '\t' => 0.28,
+            'i' | 'l' | 'I' | '\'' | '’' | '.' | ',' | ':' | ';' | '!' | '|' => 0.25,
+            'm' | 'w' | 'M' | 'W' | '@' => 0.85,
+            character if character.is_ascii_punctuation() => 0.38,
+            _ => 0.53,
+        })
+        .sum::<f64>()
+        * font_size
 }
 
 /// Highlights only active words with effects contained within their spans and fixed glyph positions.

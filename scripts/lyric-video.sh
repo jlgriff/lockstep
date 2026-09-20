@@ -7,7 +7,7 @@ if [[ ${1:-} == --help || $# -lt 2 ]]; then
     printf 'Use --reuse-timings immediately after LYRICS to restyle without transcribing again.\n'
     printf 'Use --forced-align immediately after LYRICS for supplied-text alignment; run scripts/setup-alignment.sh first.\n'
     printf 'Pass --font-size PIXELS among VIDEO_OPTIONS to resize the lyrics.\n'
-    printf 'Pass --highlight-style underline for quieter word emphasis.\n'
+    printf 'Pass --highlight-style underline for a soft moving indicator.\n'
     if [[ ${1:-} == --help ]]; then exit 0; else exit 1; fi
 fi
 

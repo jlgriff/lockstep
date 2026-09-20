@@ -50,7 +50,7 @@ struct Args {
     #[arg(long, action = clap::ArgAction::Set, default_value_t = Style::default().highlight_words)]
     highlight_words: bool,
 
-    /// Treatment used for the currently spoken word
+    /// Treatment used for the current word: colored text or a moving underline pill
     #[arg(long, value_enum, default_value = "color")]
     highlight_style: HighlightStyle,
 

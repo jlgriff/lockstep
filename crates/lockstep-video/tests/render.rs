@@ -1,4 +1,4 @@
-use lockstep_video::{render, BackgroundImage, RenderRequest, Style, TimeRange};
+use lockstep_video::{render, BackgroundImage, HighlightStyle, RenderRequest, Style, TimeRange};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -224,6 +224,55 @@ fn highlighted_pixels(frame: &[u8], right: bool) -> usize {
                 && pixel.iter().max().unwrap() - pixel.iter().min().unwrap() > 60
         })
         .count()
+}
+
+/// Finds the center of the soft indicator below a single lyric row.
+fn indicator_center(frame: &[u8]) -> Option<usize> {
+    let columns = frame
+        .chunks_exact(3)
+        .enumerate()
+        .filter(|(index, pixel)| {
+            let y = index / 640;
+            (166..=175).contains(&y) && pixel.iter().all(|value| *value > 55)
+        })
+        .map(|(index, _)| index % 640)
+        .collect::<Vec<_>>();
+    Some((columns.iter().min()? + columns.iter().max()?) / 2)
+}
+
+/// Keeps the indicator visible through a breath and glides it to the next word.
+#[test]
+#[ignore = "requires FFmpeg with libass and Arial"]
+fn underline_indicator_holds_then_moves_without_blinking() {
+    let fixture = Fixture::with_lyrics(
+        "moving-indicator",
+        r#"{"version":1,"duration":3,"lines":[
+        {"start":0.2,"end":2.8,"text":"FIRST SECOND","words":[
+            {"start":0.2,"end":1.0,"text":"FIRST"},
+            {"start":1.4,"end":2.8,"text":"SECOND"}
+        ]}
+    ]}"#,
+        Style {
+            highlight_style: HighlightStyle::Underline,
+            ..Style::default()
+        },
+    );
+    let held = indicator_center(&fixture.frame("1.15")).expect("indicator vanished in breath");
+    let moving = indicator_center(&fixture.frame("1.32")).expect("indicator vanished while moving");
+    let arrived =
+        indicator_center(&fixture.frame("1.55")).expect("indicator vanished after moving");
+    assert!(
+        (225..=255).contains(&held),
+        "indicator missed FIRST: {held}"
+    );
+    assert!(
+        (345..=395).contains(&arrived),
+        "indicator missed SECOND: {arrived}"
+    );
+    assert!(
+        held < moving && moving < arrived,
+        "{held}, {moving}, {arrived}"
+    );
 }
 
 /// Checks each word's activation, an internal pause, and the unhighlighted tail in encoded frames.

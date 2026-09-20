@@ -166,9 +166,10 @@ Both fades shorten for quick words. Completed and upcoming words remain white; i
 pauses have no highlighted word. Leading and trailing punctuation stays white while the word
 itself changes color; internal apostrophes remain part of the word. Words sharing a timing span still highlight together because the input
 does not distinguish their onsets. `--highlight-transition-ms 0` switches instantly.
-`--highlight-style underline` keeps every lyric white and adds a thin underline only beneath
-the active word. It uses the same word spans but no color transition, making it calmer than the
-default `color` style. Leading and trailing punctuation is not underlined.
+`--highlight-style underline` keeps every lyric white and places a soft pill beneath the active
+word. The pill holds through breaths, resizes and glides into place before the next word starts,
+and fades only when the page changes. Font shaping keeps it centered beneath proportional text;
+leading and trailing punctuation do not affect its size.
 `--highlight-words false` disables all per-word color and animation while preserving the lyric
 pages and instrumental notes. The Rust library exposes the same `Style::highlight_words` boolean,
 which defaults to `true`. Notes appear centered only while no lyric page is visible.
