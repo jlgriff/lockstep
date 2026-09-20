@@ -431,11 +431,10 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
     for page in windows.chunks(style.line_count) {
         let display_start = page[0].0.start.max(cursor);
         let display_end = page.last().unwrap().1;
+        if display_start > cursor {
+            append_rest(script, cursor, display_start, style);
+        }
         for (slot, (line, end)) in page.iter().enumerate() {
-            let onset = line_onset(line);
-            if onset > cursor {
-                append_rest(script, cursor, onset, style);
-            }
             let (event_style, body) = if !style.highlight_words || line.words.is_empty() {
                 ("Plain", escape_text(&line.text))
             } else {
@@ -444,8 +443,8 @@ fn append_events(script: &mut String, document: &Document, style: &Style) {
             let y = row_y(style, slot);
             let text = format!(r"{{\an5\pos({},{y})}}{body}", style.width / 2);
             append_dialogue(script, display_start, display_end, event_style, &text);
-            cursor = *end;
         }
+        cursor = display_end;
     }
     if cursor < document.duration {
         append_rest(script, cursor, document.duration, style);
@@ -463,13 +462,9 @@ fn row_y(style: &Style, slot: usize) -> i64 {
         + (2 * slot as i64 + 1 - style.line_count as i64) * i64::from(style.font_size) * 3 / 4
 }
 
-/// Places notes below preview rows during silence, or centrally in single-line mode.
+/// Centers musical notes during intervals with no visible lyrics.
 fn append_rest(script: &mut String, start: f64, end: f64, style: &Style) {
-    let y = if style.line_count == 1 {
-        i64::from(style.height) / 2
-    } else {
-        row_y(style, style.line_count)
-    };
+    let y = i64::from(style.height) / 2;
     let text = format!(
         r"{{\an5\pos({},{y})}}{}",
         style.width / 2,

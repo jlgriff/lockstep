@@ -127,7 +127,7 @@ fn disabling_highlights_preserves_plain_pages_and_rests() {
     assert!(!plain.subtitles.contains(r"\t("));
     assert_eq!(
         plain_events.iter().map(|event| event.3).collect::<Vec<_>>(),
-        ["♪ ♫", "One, two", "♪ ♫", "Three four", "♪ ♫", "Five", "♪ ♫"]
+        ["♪ ♫", "One, two", "Three four", "♪ ♫", "Five", "♪ ♫"]
     );
     assert_eq!(
         plain_events
@@ -138,6 +138,29 @@ fn disabling_highlights_preserves_plain_pages_and_rests() {
             .iter()
             .map(|event| (event.0, event.1))
             .collect::<Vec<_>>()
+    );
+}
+
+/// Shows musical notes only while no lyric page is visible.
+#[test]
+fn notes_never_overlap_visible_lyrics() {
+    let style = Style {
+        line_count: 2,
+        ..style()
+    };
+    let plan = plan(&document(), &style).unwrap();
+    let note_ranges = events(&plan.subtitles)
+        .into_iter()
+        .filter(|event| event.3 == "♪ ♫")
+        .map(|event| (event.0, event.1))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        note_ranges,
+        [
+            ("0:00:00.00", "0:00:01.23"),
+            ("0:00:07.30", "0:00:08.00"),
+            ("0:00:09.12", "0:00:10.37"),
+        ]
     );
 }
 
