@@ -40,16 +40,20 @@ pub fn read(path: &Path) -> Result<Vec<Line>> {
     Ok(parse(&text))
 }
 
-/// Splits script text into lines of tokens, dropping blank rows.
+/// Splits script text into tokenized lyrics, dropping blank and bracketed section rows.
 pub fn parse(text: &str) -> Vec<Line> {
     text.lines()
         .map(str::trim)
-        .filter(|row| !row.is_empty())
+        .filter(|row| !row.is_empty() && !(row.starts_with('[') && row.ends_with(']')))
         .map(|row| Line {
             text: row.to_string(),
             tokens: row
                 .split_whitespace()
-                .map(|raw| Token { raw: raw.to_string(), key: key(raw) })
+                .flat_map(|word| word.split_inclusive(['—', '–', '-']))
+                .map(|raw| Token {
+                    raw: raw.to_string(),
+                    key: key(raw),
+                })
                 .collect(),
         })
         .collect()
@@ -58,6 +62,22 @@ pub fn parse(text: &str) -> Vec<Line> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Aligns words separated by an em dash independently without altering the printed lyric.
+    #[test]
+    fn em_dashes_separate_alignment_words() {
+        let lines = parse("The servant—whom obey?\nHe turned—the road lay bare");
+        assert_eq!(lines[0].text, "The servant—whom obey?");
+        assert_eq!(
+            lines[0].keys().collect::<Vec<_>>(),
+            ["the", "servant", "whom", "obey"]
+        );
+        assert_eq!(lines[0].tokens[1].raw, "servant—");
+        assert_eq!(
+            lines[1].keys().collect::<Vec<_>>(),
+            ["he", "turned", "the", "road", "lay", "bare"]
+        );
+    }
 
     #[test]
     fn key_keeps_only_letters_and_digits() {
@@ -73,6 +93,19 @@ mod tests {
         assert_eq!(lines[0].text, "One two,");
         assert_eq!(lines[0].tokens[1].raw, "two,");
         assert_eq!(lines[0].tokens[1].key, "two");
+    }
+
+    #[test]
+    fn parse_drops_bracketed_section_rows() {
+        let lines =
+            parse("[Verse 1]\nFirst line\n  [Chorus – tenor with choir behind]  \nSecond line\n");
+        assert_eq!(
+            lines
+                .iter()
+                .map(|line| line.text.as_str())
+                .collect::<Vec<_>>(),
+            ["First line", "Second line"]
+        );
     }
 
     #[test]

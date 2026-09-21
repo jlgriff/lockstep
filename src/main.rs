@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use clap::Parser;
 use lockstep::export::{self, Format};
-use lockstep::{audio, script, timing, whisper};
+use lockstep::{audio, forced, script, timing, whisper};
 use std::path::{Path, PathBuf};
 
 /// Below this share of matched words a script and a recording almost certainly disagree.
@@ -25,15 +25,19 @@ Examples:
       Skips transcription and reuses a whisper JSON produced elsewhere. Needs no
       whisper install; the recording is still read, for its duration.
 
+  lockstep song.mp3 lyrics.txt --forced-align
+      Aligns the supplied lyrics directly to audio. Run scripts/setup-alignment.sh
+      once to install the optional Python backend. Produces timings, not video.
+
 Transcribing needs whisper.cpp and a model. Both are found automatically when not
 given: the binary on PATH, the model in ./models, ~/.cache/whisper and the usual
-system directories. A base model is preferred over a bigger one, which costs
-almost no accuracy here and a third of the memory. Decoding and alignment are
-pure Rust and need nothing.
+system directories. A base model is preferred by default; --model selects another.
+Forced alignment uses a separate acoustic model and does not run Whisper transcription.
 
 lockstep prints the share of the script it actually heard, and warns below 50% that
 the two files probably do not go together. Words whose time could not be measured
-are marked \"carried\" or \"spread\" in the output. README.md has the details.";
+are marked \"carried\" or \"spread\" in the output. Forced alignment instead rejects
+incomplete results; its word coverage is not an accuracy score. README.md has the details.";
 
 #[derive(Parser)]
 #[command(
@@ -43,8 +47,8 @@ are marked \"carried\" or \"spread\" in the output. README.md has the details.";
         Give it an audio file and the text spoken or sung in it, and it writes JSON saying \
         when every word arrives: enough to drive a lyric video, a karaoke display, or a \
         follow-along transcript. The words written out always come from your script, never \
-        from the transcriber, so a misheard word costs a little precision rather than \
-        putting the wrong text on screen.",
+        from the transcriber. Use --forced-align to align the supplied words directly \
+        against the recording.",
     after_help = AFTER_HELP
 )]
 struct Args {
@@ -68,6 +72,22 @@ struct Args {
     #[arg(long, value_name = "FILE")]
     transcript: Option<PathBuf>,
 
+    /// Align the supplied lyrics directly to audio with the optional CTC backend
+    #[arg(long, conflicts_with = "transcript")]
+    forced_align: bool,
+
+    /// Python environment containing the CTC aligner; see scripts/setup-alignment.sh
+    #[arg(long, env = "LOCKSTEP_ALIGNMENT_PYTHON")]
+    alignment_python: Option<PathBuf>,
+
+    /// CTC model name or local model directory
+    #[arg(long, default_value = forced::DEFAULT_MODEL)]
+    alignment_model: String,
+
+    /// ISO 639-3 language code used to normalize the supplied text
+    #[arg(long, default_value = "eng")]
+    alignment_language: String,
+
     /// whisper.cpp model file [default: the best ggml-*.bin found, preferring base]
     #[arg(long, value_name = "FILE", env = "LOCKSTEP_MODEL")]
     model: Option<PathBuf>,
@@ -81,6 +101,10 @@ struct Args {
     #[arg(long, value_name = "PRESET")]
     dtw: Option<String>,
 
+    /// Run Whisper on CPU, including machines where Metal or GPU allocation is unavailable
+    #[arg(long)]
+    no_gpu: bool,
+
     /// Keep the intermediate WAV and transcript, and print the directory holding them
     #[arg(long)]
     keep: bool,
@@ -92,6 +116,38 @@ fn run(args: &Args, work: &Path) -> Result<()> {
     let wav = work.join("audio.wav");
 
     let duration = audio::prepare(&args.audio, args.transcript.is_none().then_some(&*wav))?;
+    if args.forced_align {
+        let config = forced::Config {
+            python: args
+                .alignment_python
+                .clone()
+                .unwrap_or_else(|| forced::Config::default().python),
+            model: args.alignment_model.clone(),
+            language: args.alignment_language.clone(),
+        };
+        eprintln!(
+            "Force-aligning supplied lyrics with {} on CPU...",
+            config.model
+        );
+        let json = forced::align(&wav, &lines, &config)?;
+        if args.keep {
+            std::fs::write(work.join("aligned-words.json"), &json)?;
+        }
+        let document = forced::build(&lines, &json, &args.script, duration)?;
+        let out = args
+            .out
+            .clone()
+            .unwrap_or_else(|| args.audio.with_extension(args.format.extension()));
+        std::fs::write(&out, export::render(&document, args.format)?)
+            .with_context(|| format!("writing {}", out.display()))?;
+        println!(
+            "{}: {} lines, {} supplied words force-aligned; coverage is not an accuracy score",
+            out.display(),
+            document.lines.len(),
+            document.alignment.words
+        );
+        return Ok(());
+    }
     let transcript = match &args.transcript {
         Some(path) => std::fs::read_to_string(path)
             .with_context(|| format!("reading transcript {}", path.display()))?,
@@ -101,6 +157,7 @@ fn run(args: &Args, work: &Path) -> Result<()> {
                 binary: args.whisper.clone(),
                 model: args.model.clone(),
                 dtw: args.dtw.clone(),
+                no_gpu: args.no_gpu,
             },
         )?,
     };
@@ -140,6 +197,7 @@ fn run(args: &Args, work: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Runs alignment and removes temporary audio unless the caller requests inspection files.
 fn main() -> Result<()> {
     let args = Args::parse();
     let work = std::env::temp_dir().join(format!("lockstep-{}", std::process::id()));

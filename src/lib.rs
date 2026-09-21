@@ -23,6 +23,7 @@
 pub mod align;
 pub mod audio;
 pub mod export;
+pub mod forced;
 pub mod script;
 pub mod timing;
 pub mod whisper;

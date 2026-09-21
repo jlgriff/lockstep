@@ -6,6 +6,10 @@ rust-version = "1.85"
 description = "Times a known script against its recording, word by word"
 license = "MIT"
 
+[workspace]
+members = ["crates/lockstep-video"]
+resolver = "2"
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive", "env"] }

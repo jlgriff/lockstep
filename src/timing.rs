@@ -43,9 +43,11 @@ pub struct Line {
 /// The version of this file format. A consumer should refuse a version it does not know.
 pub const FORMAT_VERSION: u32 = 1;
 
-/// How much of the script the recording was actually heard to say.
+/// Script coverage, with the optional method distinguishing forced alignment from recognition.
 #[derive(Serialize)]
 pub struct Alignment {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub method: Option<&'static str>,
     pub matched: usize,
     pub words: usize,
     pub rate: f64,
@@ -130,7 +132,7 @@ fn carry<'a>(words: impl Iterator<Item = &'a mut Loose>) {
     }
 }
 
-/// Times each line's words from the alignment, showing every one of them slightly early.
+/// Preserves measured word spans while giving each line an earlier display start.
 fn place(lines: &[script::Line], heard: &[Heard], matched: &[Option<usize>]) -> Vec<Timed> {
     let mut cursor = 0;
     lines
@@ -149,8 +151,8 @@ fn place(lines: &[script::Line], heard: &[Heard], matched: &[Option<usize>]) -> 
                         .and_then(|index| heard.get(index));
                     Loose {
                         text: token.raw.clone(),
-                        start: hit.map(|word| (word.start - LEAD).max(0.0)),
-                        end: hit.map(|word| (word.end - LEAD).max(0.0)),
+                        start: hit.map(|word| word.start),
+                        end: hit.map(|word| word.end),
                         measured: hit.is_some(),
                     }
                 })
@@ -159,12 +161,17 @@ fn place(lines: &[script::Line], heard: &[Heard], matched: &[Option<usize>]) -> 
             let span = words
                 .iter()
                 .find_map(|word| word.start)
+                .map(|start| (start - LEAD).max(0.0))
                 .zip(words.iter().rev().find_map(|word| word.end));
 
             carry(words.iter_mut());
             carry(words.iter_mut().rev());
 
-            Timed { text: line.text.clone(), words, span }
+            Timed {
+                text: line.text.clone(),
+                words,
+                span,
+            }
         })
         .collect()
 }
@@ -190,7 +197,10 @@ fn bridge(timed: Vec<Timed>, duration: f64) -> Vec<Placed> {
 
                 let first = before.map_or(0, |b| b + 1);
                 let count = after.unwrap_or(total) - first + 1;
-                (slot(from, to, count, i - first), slot(from, to, count, i - first + 1))
+                (
+                    slot(from, to, count, i - first),
+                    slot(from, to, count, i - first + 1),
+                )
             });
 
             let spread = line.words.len();
@@ -202,11 +212,19 @@ fn bridge(timed: Vec<Timed>, duration: f64) -> Vec<Placed> {
                     start: word.start.unwrap_or_else(|| slot(start, end, spread, i)),
                     end: word.end.unwrap_or_else(|| slot(start, end, spread, i + 1)),
                     text: word.text,
-                    source: (!word.measured)
-                        .then_some(if anchored { Source::Carried } else { Source::Spread }),
+                    source: (!word.measured).then_some(if anchored {
+                        Source::Carried
+                    } else {
+                        Source::Spread
+                    }),
                 })
                 .collect();
-            Placed { text: line.text, words, start, end }
+            Placed {
+                text: line.text,
+                words,
+                start,
+                end,
+            }
         })
         .collect()
 }
@@ -228,7 +246,11 @@ fn finish(placed: Vec<Placed>) -> Vec<Line> {
                     .into_iter()
                     .map(|word| {
                         let word_start = round(word.start.max(start));
-                        Word { start: word_start, end: round(word.end).max(word_start), ..word }
+                        Word {
+                            start: word_start,
+                            end: round(word.end).max(word_start),
+                            ..word
+                        }
                     })
                     .collect(),
             }
@@ -269,6 +291,7 @@ pub fn build(
             .unwrap_or_default(),
         duration: round(duration),
         alignment: Alignment {
+            method: None,
             matched: report.matched,
             words: report.script_words,
             rate: round(report.confidence()),
@@ -287,7 +310,11 @@ mod tests {
     fn heard(words: &[(&str, f64)]) -> Vec<Heard> {
         let mut heard: Vec<Heard> = words
             .iter()
-            .map(|(key, start)| Heard { key: key.to_string(), start: *start, end: start + 1.0 })
+            .map(|(key, start)| Heard {
+                key: key.to_string(),
+                start: *start,
+                end: start + 1.0,
+            })
             .collect();
         for i in 0..heard.len().saturating_sub(1) {
             heard[i].end = heard[i].end.min(heard[i + 1].start);
@@ -297,12 +324,21 @@ mod tests {
 
     /// Times a fixture script against fixture words over a thirty second recording.
     fn build_fixture(text: &str, words: &[(&str, f64)]) -> (Document, Report) {
-        build(&script::parse(text), &heard(words), Path::new("fixture.txt"), 30.0).unwrap()
+        build(
+            &script::parse(text),
+            &heard(words),
+            Path::new("fixture.txt"),
+            30.0,
+        )
+        .unwrap()
     }
 
     /// The (start, end) of every word in a line.
     fn spans(line: &Line) -> Vec<(f64, f64)> {
-        line.words.iter().map(|word| (word.start, word.end)).collect()
+        line.words
+            .iter()
+            .map(|word| (word.start, word.end))
+            .collect()
     }
 
     /// How each word of a line came by its time.
@@ -310,23 +346,27 @@ mod tests {
         line.words.iter().map(|word| word.source).collect()
     }
 
+    /// Previews a line early without shifting its spoken words or shortening its final word.
     #[test]
-    fn a_word_spans_what_it_was_heard_over_shifted_early() {
+    fn display_lead_does_not_shift_word_timing() {
         let (document, _) = build_fixture("one two", &[("one", 10.0), ("two", 10.5)]);
-        // Both ends move by LEAD, so the spans stay flush instead of overlapping by 0.3s.
-        assert_eq!(spans(&document.lines[0]), [(9.7, 10.2), (10.2, 11.2)]);
-        assert_eq!((document.lines[0].start, document.lines[0].end), (9.7, 11.2));
+        assert_eq!(spans(&document.lines[0]), [(10.0, 10.5), (10.5, 11.5)]);
+        assert_eq!(
+            (document.lines[0].start, document.lines[0].end),
+            (9.7, 11.5)
+        );
     }
 
+    /// Copies measured spans for unmatched neighbors without moving their timestamps.
     #[test]
     fn a_carried_word_takes_the_whole_span_of_its_neighbour() {
-        // Four words, so spreading them across the line would land somewhere other than the
-        // neighbour's end and the two cases can be told apart.
-        let (document, _) =
-            build_fixture("well listen here friend", &[("listen", 10.0), ("here", 10.5)]);
+        let (document, _) = build_fixture(
+            "well listen here friend",
+            &[("listen", 10.0), ("here", 10.5)],
+        );
         assert_eq!(
             spans(&document.lines[0]),
-            [(9.7, 10.2), (9.7, 10.2), (10.2, 11.2), (10.2, 11.2)]
+            [(10.0, 10.5), (10.0, 10.5), (10.5, 11.5), (10.5, 11.5)]
         );
         assert_eq!(
             sources(&document.lines[0]),
@@ -334,6 +374,7 @@ mod tests {
         );
     }
 
+    /// Places missing lines in the gap between measured endings and the next line's preview.
     #[test]
     fn spread_words_tile_their_line_exactly() {
         let (document, _) = build_fixture(
@@ -342,27 +383,42 @@ mod tests {
         );
         let bridged = &document.lines[1];
         assert_eq!(bridged.text, "three four");
-        assert_eq!((bridged.start, bridged.end), (11.2, 15.2));
-        assert_eq!(spans(bridged), [(11.2, 13.2), (13.2, 15.2)]);
+        assert_eq!((bridged.start, bridged.end), (11.5, 15.35));
+        assert_eq!(spans(bridged), [(11.5, 13.43), (13.43, 15.35)]);
         assert_eq!(sources(bridged), [Some(Source::Spread); 2]);
     }
 
+    /// Preserves ordered word spans inside a line that can preview before the first word.
     #[test]
     fn a_lines_words_run_in_order_and_fill_it_end_to_end() {
-        // A fixture with carried words as well as measured and spread ones, since words sharing
-        // a carried span are the case where spans stop being strictly separate.
         let (document, _) = build_fixture(
             "well one two\nthree four\nfive six",
             &[("one", 10.0), ("two", 10.5), ("five", 19.5), ("six", 20.0)],
         );
         for line in &document.lines {
             for pair in line.words.windows(2) {
-                assert!(pair[0].start <= pair[1].start, "starts go backwards in {:?}", line.text);
-                assert!(pair[0].end <= pair[1].end, "ends go backwards in {:?}", line.text);
+                assert!(
+                    pair[0].start <= pair[1].start,
+                    "starts go backwards in {:?}",
+                    line.text
+                );
+                assert!(
+                    pair[0].end <= pair[1].end,
+                    "ends go backwards in {:?}",
+                    line.text
+                );
             }
-            assert_eq!(line.words[0].start, line.start, "line starts with its first word");
-            assert_eq!(line.words.last().unwrap().end, line.end, "line ends with its last word");
+            assert!(
+                line.words[0].start >= line.start,
+                "words cannot precede their preview"
+            );
+            assert_eq!(
+                line.words.last().unwrap().end,
+                line.end,
+                "line ends with its last word"
+            );
         }
+        assert_eq!(document.lines[0].words[0].start, 10.0);
     }
 
     #[test]
@@ -370,31 +426,49 @@ mod tests {
         // Sharing a time is what "carried" means, so the two spans coincide rather than abut.
         let (document, _) = build_fixture("well one two", &[("one", 10.0), ("two", 10.5)]);
         let words = &document.lines[0].words;
-        assert_eq!((words[0].start, words[0].end), (words[1].start, words[1].end));
+        assert_eq!(
+            (words[0].start, words[0].end),
+            (words[1].start, words[1].end)
+        );
         assert_eq!(words[0].source, Some(Source::Carried));
     }
 
+    /// Leaves untimed intervals visible between anchored and estimated lyric lines.
     #[test]
     fn silence_is_left_as_a_gap_rather_than_written_as_a_rest() {
         let (document, _) = build_fixture(
             "one two\nthree four\nfive six",
             &[("one", 10.0), ("two", 10.5), ("five", 19.5), ("six", 20.0)],
         );
-        assert_eq!(document.lines.len(), 3, "one entry per script line, nothing inserted");
+        assert_eq!(
+            document.lines.len(),
+            3,
+            "one entry per script line, nothing inserted"
+        );
         assert!(document.lines.iter().all(|line| !line.text.is_empty()));
-        // The 4s of quiet is the gap between the lines either side of it.
-        assert_eq!(document.lines[2].start - document.lines[1].end, 4.0);
+        assert_eq!(round(document.lines[2].start - document.lines[1].end), 3.85);
     }
 
     #[test]
     fn the_document_says_what_made_it_and_from_what() {
-        let (document, _) =
-            build(&script::parse("one"), &heard(&[("one", 10.0)]), Path::new("/deep/path/script.txt"), 30.0)
-                .unwrap();
+        let (document, _) = build(
+            &script::parse("one"),
+            &heard(&[("one", 10.0)]),
+            Path::new("/deep/path/script.txt"),
+            30.0,
+        )
+        .unwrap();
         assert_eq!(document.version, FORMAT_VERSION);
-        assert!(document.generator.starts_with("lockstep "), "{}", document.generator);
+        assert!(
+            document.generator.starts_with("lockstep "),
+            "{}",
+            document.generator
+        );
         assert!(document.generator.contains(env!("CARGO_PKG_VERSION")));
-        assert_eq!(document.script, "script.txt", "only the name, never the caller's path");
+        assert_eq!(
+            document.script, "script.txt",
+            "only the name, never the caller's path"
+        );
         assert_eq!(document.duration, 30.0);
     }
 
@@ -402,7 +476,10 @@ mod tests {
     fn alignment_keeps_the_counts_and_not_only_the_rate() {
         let (document, report) =
             build_fixture("one two three four", &[("one", 10.0), ("two", 10.5)]);
-        assert_eq!((document.alignment.matched, document.alignment.words), (2, 4));
+        assert_eq!(
+            (document.alignment.matched, document.alignment.words),
+            (2, 4)
+        );
         assert_eq!(document.alignment.rate, 0.5);
         assert_eq!(report.confidence(), 0.5);
     }
@@ -410,7 +487,10 @@ mod tests {
     #[test]
     fn a_misheard_word_counts_against_the_rate() {
         let (document, _) = build_fixture("one two", &[("one", 10.0), ("too", 10.5)]);
-        assert_eq!((document.alignment.matched, document.alignment.words), (1, 2));
+        assert_eq!(
+            (document.alignment.matched, document.alignment.words),
+            (1, 2)
+        );
     }
 
     #[test]
@@ -426,40 +506,64 @@ mod tests {
         assert_eq!(sources(&document.lines[0]), [None, None]);
     }
 
+    /// Borrows the nearest measured onset for words with no matching transcript token.
     #[test]
     fn a_word_never_heard_takes_the_time_of_the_nearest_word_that_was() {
-        let (document, _) =
-            build_fixture("well now listen here friend", &[("listen", 10.0), ("here", 10.5)]);
-        let starts: Vec<f64> = document.lines[0].words.iter().map(|word| word.start).collect();
-        assert_eq!(starts, [9.7, 9.7, 9.7, 10.2, 10.2]);
+        let (document, _) = build_fixture(
+            "well now listen here friend",
+            &[("listen", 10.0), ("here", 10.5)],
+        );
+        let starts: Vec<f64> = document.lines[0]
+            .words
+            .iter()
+            .map(|word| word.start)
+            .collect();
+        assert_eq!(starts, [10.0, 10.0, 10.0, 10.5, 10.5]);
     }
 
     #[test]
     fn a_script_heard_nowhere_is_spread_across_the_whole_recording() {
         let (document, report) = build_fixture("one\ntwo", &[]);
         assert_eq!(report.anchored, 0);
-        assert_eq!((document.lines[0].start, document.lines[0].end), (0.0, 10.0));
-        assert_eq!((document.lines[1].start, document.lines[1].end), (10.0, 20.0));
+        assert_eq!(
+            (document.lines[0].start, document.lines[0].end),
+            (0.0, 10.0)
+        );
+        assert_eq!(
+            (document.lines[1].start, document.lines[1].end),
+            (10.0, 20.0)
+        );
     }
 
+    /// Orders previews at shared onsets without changing the measured word starts.
     #[test]
     fn two_lines_heard_at_the_same_moment_still_start_in_order() {
         let (document, _) = build_fixture("one\ntwo", &[("one", 10.0), ("two", 10.0)]);
         assert_eq!(document.lines[0].start, 9.7);
         assert_eq!(document.lines[1].start, 9.71);
-        assert_eq!(document.lines[1].words[0].start, 9.71, "a word never precedes its own line");
+        assert_eq!(
+            document.lines[1].words[0].start, 10.0,
+            "the measured onset is preserved"
+        );
     }
 
+    /// Serializes provenance alongside word timing independently of the line preview.
     #[test]
     fn the_json_names_every_key_in_full() {
         let (document, _) = build_fixture("well listen", &[("listen", 10.0)]);
         let json = serde_json::to_string(&document).unwrap();
         assert!(json.contains(r#""version":1"#), "{json}");
-        assert!(json.contains(r#""alignment":{"matched":1,"words":2,"rate":0.5}"#), "{json}");
         assert!(
-            json.contains(r#"{"start":9.7,"end":10.7,"text":"well","timing":"carried"}"#),
+            json.contains(r#""alignment":{"matched":1,"words":2,"rate":0.5}"#),
             "{json}"
         );
-        assert!(json.contains(r#"{"start":9.7,"end":10.7,"text":"listen"}"#), "{json}");
+        assert!(
+            json.contains(r#"{"start":10.0,"end":11.0,"text":"well","timing":"carried"}"#),
+            "{json}"
+        );
+        assert!(
+            json.contains(r#"{"start":10.0,"end":11.0,"text":"listen"}"#),
+            "{json}"
+        );
     }
 }

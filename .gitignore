@@ -1,1 +1,3 @@
 /target
+/.venv-align
+__pycache__/
